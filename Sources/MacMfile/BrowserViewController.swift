@@ -89,7 +89,11 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             statusBar.heightAnchor.constraint(equalToConstant: 24),
         ])
         view = root
-        body.setPosition(220, ofDividerAt: 0)
+        // Ngăn điều hướng giữ nguyên bề rộng, vùng nội dung nhận phần dư khi cửa sổ to ra (như Windows 11).
+        body.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)
+        body.setHoldingPriority(NSLayoutConstraint.Priority(200), forSubviewAt: 1)
+        body.setHoldingPriority(NSLayoutConstraint.Priority(270), forSubviewAt: 2)
+        sidebar.scroll.widthAnchor.constraint(lessThanOrEqualToConstant: 480).isActive = true
 
         setupHelp()
         sidebar.onSelect = { [weak self] p in self?.navigate(to: p) }
@@ -280,6 +284,17 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         specialPage.onOpenNewWindow = { p in (NSApp.delegate as? AppDelegate)?.openWindow(at: p) }
         specialPage.onSelectionChange = { [weak self] _ in self?.selectionChanged() }
         return container
+    }
+
+    /// Đặt bề rộng ngăn điều hướng (220) khi khung đã có kích thước thật; đặt trong loadView thì bị bỏ qua vì lúc đó bề rộng còn 0.
+    private var didPlaceDividers = false
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        guard !didPlaceDividers, body.bounds.width > 500 else { return }
+        didPlaceDividers = true
+        body.setPosition(220, ofDividerAt: 0)
+        let w = body.bounds.width
+        body.setPosition(sidePane.kind == .none ? w : max(400, w - 300), ofDividerAt: 1)
     }
 
     // MARK: Ngăn chi tiết / xem trước (FR-07)

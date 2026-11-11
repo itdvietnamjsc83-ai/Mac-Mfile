@@ -1,4 +1,5 @@
 import AppKit
+import MfileCore
 import UniformTypeIdentifiers
 
 /// Màu, phông, kích thước đo theo Windows 11 File Explorer (Mục 2.3, bản mẫu đã duyệt).
@@ -325,6 +326,9 @@ enum FileIcons {
 
     /// Biểu tượng cho một đường dẫn: kiểu Windows nếu có, không thì của macOS.
     static func icon(for path: String) -> NSImage {
+        // Trang chủ và Máy Mac này không phải đường dẫn thật: dùng biểu tượng riêng như tab của Windows 11.
+        if path == SpecialLocation.home { return Theme.symbol("house", size: 16) ?? NSImage() }
+        if path == SpecialLocation.thisMac { return named("desktop_computer") ?? NSImage() }
         if let k = kind(of: path), let img = named(k) { return img }
         return NSWorkspace.shared.icon(forFile: path)
     }
