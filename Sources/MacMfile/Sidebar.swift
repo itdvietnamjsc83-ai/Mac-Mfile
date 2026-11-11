@@ -28,7 +28,7 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
         let col = NSTableColumn(identifier: .init("nav"))
         table.addTableColumn(col)
         table.headerView = nil
-        table.rowHeight = 28
+        table.rowHeight = (28 * max(1, Theme.textScale)).rounded()
         table.intercellSpacing = NSSize(width: 0, height: 0)
         table.style = .sourceList
         table.backgroundColor = Theme.background

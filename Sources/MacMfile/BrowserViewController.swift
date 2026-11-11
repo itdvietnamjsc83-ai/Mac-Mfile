@@ -401,7 +401,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         let isTable = mode == .details
         tableScroll.isHidden = !isTable || isSpecialPage
         collectionScroll.isHidden = isTable || isSpecialPage
-        table.rowHeight = compact ? 24 : Theme.rowHeight
+        table.rowHeight = compact ? (24 * max(1, Theme.textScale)).rounded() : Theme.rowHeight
         updateFlowLayout()
         reloadContent()
         selectIndexes(keep, scroll: true)

@@ -84,6 +84,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Đóng cửa sổ cuối vẫn chạy nền để Cmd+E còn mở được cửa sổ mới.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    /// Mở lại mọi cửa sổ với cùng các tab, vị trí và kích thước (sau khi đổi cỡ chữ).
+    func rebuildWindows() {
+        let snapshot = windows.map { ($0.tabPaths, $0.window?.frame) }
+        let old = windows
+        windows = []
+        old.forEach { $0.window?.close() }
+        for (paths, frame) in snapshot {
+            let wc = openWindow(paths: paths)
+            if let f = frame { wc.window?.setFrame(f, display: true) }
+        }
+    }
+
     @discardableResult
     func openWindow(at path: String) -> MainWindowController { openWindow(paths: [path]) }
 

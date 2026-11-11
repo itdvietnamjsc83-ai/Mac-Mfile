@@ -42,12 +42,20 @@ enum Theme {
     static var isDark: Bool { NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }
     static func toggleAppearance() { appearance = isDark ? .light : .dark }
 
-    static let rowHeight: CGFloat = 32
+    /// Cỡ chữ hiển thị do người dùng chọn trong Tùy chọn (1 = 100%). Hàng và chữ cùng phóng theo.
+    static let textScaleKey = "MacMfile.textScale"
+    static let textScales: [Double] = [0.9, 1.0, 1.15, 1.3, 1.5]
+    static var textScale: CGFloat {
+        let v = UserDefaults.standard.double(forKey: textScaleKey)
+        return v >= 0.8 && v <= 2 ? CGFloat(v) : 1
+    }
+    static var rowHeight: CGFloat { (32 * max(1, textScale)).rounded() }
 
     /// Phông giao diện như Windows 11: Segoe UI nếu máy đã cài; nếu không thì Open Sans đóng kèm
     /// (cùng tác giả Steve Matteson, dáng chữ gần Segoe, đủ dấu tiếng Việt, giấy phép OFL); cuối cùng là phông hệ thống.
-    static func font(_ size: CGFloat = 12, weight: NSFont.Weight = .regular) -> NSFont {
+    static func font(_ size0: CGFloat = 12, weight: NSFont.Weight = .regular) -> NSFont {
         FluentIcons.register()
+        let size = (size0 * textScale * 2).rounded() / 2
         let semibold = weight != .regular
         if let f = NSFont(name: semibold ? "Segoe UI Semibold" : "Segoe UI", size: size) { return f }
         // Open Sans có chiều cao chữ thường lớn hơn Segoe; thu nhỏ 5% để cột chữ cân như bản Windows.
