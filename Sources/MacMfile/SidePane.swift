@@ -3,7 +3,7 @@ import Quartz
 import MfileCore
 
 /// Ngăn bên phải: Chi tiết (Option+Shift+P) hoặc Xem trước (Option+P), như Alt+Shift+P / Alt+P của Windows (FR-07).
-enum SidePaneKind: String { case none, details, preview }
+enum SidePaneKind: String { case none, details, preview, help }
 
 final class SidePaneController {
     let view = ColorView(Theme.chrome)
@@ -17,6 +17,7 @@ final class SidePaneController {
     private var preview: QLPreviewView?
     private var current: [FileItem] = []
     private var folderPath = ""
+    let help = HelpPaneView()
 
     init() {
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -47,11 +48,14 @@ final class SidePaneController {
         ])
         for v in [title, subtitle] { v.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true }
         view.isHidden = true
+        view.pin(help)
+        help.isHidden = true
     }
 
     func show(_ k: SidePaneKind) {
         kind = k
         view.isHidden = k == .none
+        help.isHidden = k != .help
         refresh()
     }
 
@@ -63,6 +67,11 @@ final class SidePaneController {
 
     func refresh() {
         guard kind != .none else { return }
+        if kind == .help {
+            stack.isHidden = true; placeholder.isHidden = true; preview?.isHidden = true
+            help.reload()
+            return
+        }
         if kind == .preview { showPreview() } else { showDetails() }
     }
 

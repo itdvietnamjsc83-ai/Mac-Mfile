@@ -90,6 +90,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         view = root
         body.setPosition(220, ofDividerAt: 0)
 
+        setupHelp()
         sidebar.onSelect = { [weak self] p in self?.navigate(to: p) }
         sidebar.onOpenNewWindow = { p in (NSApp.delegate as? AppDelegate)?.openWindow(at: p) }
         sidebar.onOpenNewTab = { [weak self] p in (self?.view.window?.windowController as? MainWindowController)?.addTab(path: p) }
@@ -279,6 +280,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         sidePane.show(newKind)
         UserDefaults.standard.set(newKind.rawValue, forKey: "MacMfile.sidePane")
         paneButton.isActive = newKind == .details
+        if newKind == .help { UserDefaults.standard.set(SidePaneKind.none.rawValue, forKey: "MacMfile.sidePane") }
         sidePane.update(selection: selectedItems, folder: currentPath)
         body.layoutSubtreeIfNeeded()
         let w = body.bounds.width
@@ -286,6 +288,47 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     @objc func toggleDetailsPane(_ sender: Any?) { showPane(.details) }
+
+    /// F1: ngăn Hướng dẫn sử dụng (bản mẫu bảng 23).
+    @objc func showHelp(_ sender: Any?) {
+        if sidePane.kind != .help { showPane(.help) }
+        sidePane.help.focusSearch()
+    }
+    @objc func showWindowsGuide(_ sender: Any?) {
+        if sidePane.kind != .help { showPane(.help) }
+        sidePane.help.focusSearch(HelpTopics.topic("windowsUsers")?.title() ?? "")
+    }
+
+    private func setupHelp() {
+        let h = sidePane.help
+        h.onClose = { [weak self] in self?.showPane(.help) }
+        h.selectionName = { [weak self] in self?.selectedItems.first?.name }
+        h.perform = { [weak self] sel in
+            guard let self else { return }
+            if !NSApp.sendAction(Selector(sel), to: nil, from: self) { _ = NSApp.sendAction(Selector(sel), to: self, from: self) }
+        }
+        h.showSteps = { [weak self] tp in
+            guard let self else { return }
+            let vi = L10n.current == .vi
+            let steps: [(NSView, String)] = tp.steps.compactMap { st in
+                guard let v = self.helpTarget(st.target) else { return nil }
+                return (v, vi ? st.vi : st.en)
+            }
+            CoachMarks.run(steps)
+        }
+    }
+
+    private func helpTarget(_ name: String) -> NSView? {
+        switch name {
+        case "content": return viewMode == .details ? tableScroll : collectionScroll
+        case "address": return address
+        case "search": return search
+        case "sidebar": return sidebar.scroll
+        case "theme": return themeButton
+        case "language": return langButton
+        default: return commandButtons.first { $0.1 == name }?.0
+        }
+    }
     @objc func togglePreviewPane(_ sender: Any?) { showPane(.preview) }
 
     // MARK: Chế độ xem (FR-06, FR-21)

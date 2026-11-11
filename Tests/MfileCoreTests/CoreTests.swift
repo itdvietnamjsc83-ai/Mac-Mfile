@@ -351,3 +351,17 @@ final class ArchivePasswordTests: XCTestCase {
     }
 }
 #endif
+
+final class HelpTests: XCTestCase {
+    func testSearchWithoutAccents() {
+        XCTAssertEqual(HelpTopics.search("sao chep duong dan").first?.id, "copyPath")
+        XCTAssertEqual(HelpTopics.search("xóa vĩnh viễn").first?.id, "deleteForever")
+        XCTAssertTrue(HelpTopics.search("giai nen").contains { $0.id == "extract" })
+        XCTAssertFalse(HelpTopics.search("").isEmpty)
+        XCTAssertTrue(HelpTopics.search("zzzqqq").isEmpty)
+    }
+
+    func testTopicsUnique() {
+        XCTAssertEqual(Set(HelpTopics.all.map(\.id)).count, HelpTopics.all.count)
+    }
+}

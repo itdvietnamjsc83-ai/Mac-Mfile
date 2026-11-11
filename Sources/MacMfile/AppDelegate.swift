@@ -20,6 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installCtrlLikeWindows()
         AutoCleanWatcher.shared.restart()
         NSApp.activate(ignoringOtherApps: true)
+        if UserDefaults.standard.bool(forKey: firstRunKey) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { TipsWindowController.show() }
+        }
         if !UserDefaults.standard.bool(forKey: firstRunKey) {
             UserDefaults.standard.set(true, forKey: firstRunKey)
             DispatchQueue.main.async { self.askAboutHotKey() }
@@ -160,6 +163,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func toggleLanguage(_ sender: Any?) { L10n.current = L10n.current.toggled }
 
     @objc func showAbout(_ sender: Any?) { AboutWindowController.show() }
+    @objc func showTipNow(_ sender: Any?) { TipsWindowController.show(force: true) }
+    @objc func toggleTips(_ sender: Any?) { Settings.showTips.toggle(); buildMainMenu() }
+    @objc func showWhatsNew(_ sender: Any?) {
+        let a = NSAlert()
+        a.messageText = L10n.t("whatsNew")
+        a.informativeText = L10n.t("whatsNewText")
+        a.runModal()
+    }
+    @objc func sendFeedback(_ sender: Any?) {
+        let subject = "Góp ý Mac Mfile".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        if let u = URL(string: "mailto:\(Developer.email)?subject=\(subject)") { NSWorkspace.shared.open(u) }
+    }
 
     @objc func showShortcuts(_ sender: Any?) {
         let vi = L10n.current == .vi
@@ -322,9 +337,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("snapRight", #selector(MainWindowController.snapRight(_:)), right),
         ]))
 
+        let tipsItem = item("tipsAtLaunchMenu", #selector(toggleTips(_:)), "")
+        tipsItem.state = Settings.showTips ? .on : .off
         let help = submenu("menuHelp", [
+            item("userGuide", #selector(BrowserViewController.showHelp(_:)), String(Character(UnicodeScalar(NSF1FunctionKey)!)), []),
             item("shortcuts", #selector(showShortcuts(_:)), "/"),
+            item("windowsUsers", #selector(BrowserViewController.showWindowsGuide(_:)), ""),
+            item("tipOfDay", #selector(showTipNow(_:)), ""),
+            tipsItem,
             .separator(),
+            item("whatsNew", #selector(showWhatsNew(_:)), ""),
+            item("sendFeedback", #selector(sendFeedback(_:)), ""),
             item("aboutTitle", #selector(showAbout(_:)), ""),
         ])
         main.addItem(help)
