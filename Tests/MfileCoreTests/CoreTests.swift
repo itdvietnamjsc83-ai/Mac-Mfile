@@ -117,7 +117,9 @@ final class NavigationTests: XCTestCase {
     func testParent() {
         XCTAssertEqual(NavigationHistory.parent(of: "/a/b"), "/a")
         XCTAssertEqual(NavigationHistory.parent(of: "/a"), "/")
-        XCTAssertNil(NavigationHistory.parent(of: "/"))
+        XCTAssertEqual(NavigationHistory.parent(of: "/"), SpecialLocation.thisMac)
+        XCTAssertNil(NavigationHistory.parent(of: SpecialLocation.thisMac))
+        XCTAssertNil(NavigationHistory.parent(of: SpecialLocation.home))
     }
 
     func testBreadcrumbLocalized() {
@@ -126,6 +128,12 @@ final class NavigationTests: XCTestCase {
         XCTAssertEqual(c.last?.path, "/Users/dung/Documents/Hợp đồng")
         let e = Breadcrumb.crumbs(for: "/Volumes/USB", home: "/Users/dung", lang: .en)
         XCTAssertEqual(e.map(\.title), ["This Mac", "Volumes", "USB"])
+        XCTAssertEqual(e.first?.path, SpecialLocation.thisMac)
+        XCTAssertEqual(Breadcrumb.crumbs(for: SpecialLocation.home, lang: .vi).map(\.title), ["Trang chủ"])
+        XCTAssertEqual(Breadcrumb.crumbs(for: "/", lang: .en).count, 2)
+        XCTAssertEqual(SpecialLocation.fromTyped("máy mac này"), SpecialLocation.thisMac)
+        XCTAssertEqual(SpecialLocation.fromTyped("Home"), SpecialLocation.home)
+        XCTAssertNil(SpecialLocation.fromTyped("/Users"))
     }
 }
 

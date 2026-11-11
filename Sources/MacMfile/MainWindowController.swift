@@ -31,7 +31,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
         buildContent()
-        for p in (paths.isEmpty ? [NSHomeDirectory()] : paths) { addTab(path: p, activate: false) }
+        for p in (paths.isEmpty ? [SpecialLocation.home] : paths) { addTab(path: p, activate: false) }
         selectTab(0)
         window.center()
     }
@@ -117,7 +117,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         selectTab(min(activeIndex >= i ? max(activeIndex - 1, 0) : activeIndex, tabs.count - 1))
     }
 
-    @objc func newTab(_ sender: Any?) { addTab(path: NSHomeDirectory()) }
+    @objc func newTab(_ sender: Any?) { addTab(path: SpecialLocation.home) }
     @objc func closeCurrentTab(_ sender: Any?) { closeTab(at: activeIndex) }
     @objc func nextTab(_ sender: Any?) { selectTab((activeIndex + 1) % tabs.count) }
     @objc func previousTab(_ sender: Any?) { selectTab((activeIndex - 1 + tabs.count) % tabs.count) }

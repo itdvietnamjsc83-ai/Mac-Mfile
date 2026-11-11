@@ -63,7 +63,18 @@ public enum DirectoryReader {
         let url = URL(fileURLWithPath: path, isDirectory: true)
         let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .isHiddenKey, .isPackageKey]
         let urls = try fileManager.contentsOfDirectory(at: url, includingPropertiesForKeys: keys, options: showHidden ? [] : [.skipsHiddenFiles])
-        return urls.map { u in
+        return urls.map { item(for: $0) }
+    }
+
+    /// Một mục bất kỳ theo đường dẫn (dùng cho Trang chủ, ngăn chi tiết).
+    public static func item(at path: String) -> FileItem? {
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        return item(for: URL(fileURLWithPath: path))
+    }
+
+    private static let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .isHiddenKey, .isPackageKey]
+
+    private static func item(for u: URL) -> FileItem {
             let v = try? u.resourceValues(forKeys: Set(keys))
             let isPackage = v?.isPackage ?? false
             return FileItem(
@@ -74,6 +85,5 @@ public enum DirectoryReader {
                 modified: v?.contentModificationDate ?? Date(timeIntervalSince1970: 0),
                 isHidden: v?.isHidden ?? false
             )
-        }
     }
 }

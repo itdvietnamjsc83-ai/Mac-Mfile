@@ -31,8 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func restoreSession() {
         let saved = UserDefaults.standard.array(forKey: sessionKey) as? [[String]] ?? []
         let fm = FileManager.default
-        let valid = saved.map { $0.filter { fm.fileExists(atPath: $0) } }.filter { !$0.isEmpty }
-        if valid.isEmpty { openWindow(at: NSHomeDirectory()); return }
+        let valid = saved.map { $0.filter { SpecialLocation.isSpecial($0) || fm.fileExists(atPath: $0) } }.filter { !$0.isEmpty }
+        if valid.isEmpty { openWindow(at: SpecialLocation.home); return }
         for paths in valid { openWindow(paths: paths) }
     }
 
@@ -41,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { openWindow(at: NSHomeDirectory()) }
+        if !flag { openWindow(at: SpecialLocation.home) }
         return true
     }
 
@@ -68,7 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func newWindow(_ sender: Any?) {
-        openWindow(at: NSHomeDirectory())
+        openWindow(at: SpecialLocation.home)
         NSApp.activate(ignoringOtherApps: true)
     }
 

@@ -32,11 +32,37 @@ public struct NavigationHistory: Sendable {
         return p
     }
 
-    /// Thư mục cha; nil khi đã ở gốc.
+    /// Thư mục cha; từ ổ gốc đi lên trang Máy Mac này (như C:\ lên This PC); nil ở các trang đặc biệt.
     public static func parent(of path: String) -> String? {
-        guard path != "/" else { return nil }
+        if SpecialLocation.isSpecial(path) { return nil }
+        if path == "/" { return SpecialLocation.thisMac }
         let p = (path as NSString).deletingLastPathComponent
         return p.isEmpty ? "/" : p
+    }
+}
+
+/// Trang không phải thư mục thật: Trang chủ và Máy Mac này (FR-08, Mục 5.1).
+public enum SpecialLocation {
+    public static let home = "mfile:home"
+    public static let thisMac = "mfile:thismac"
+
+    public static func isSpecial(_ path: String) -> Bool { path.hasPrefix("mfile:") }
+
+    public static func title(_ path: String, lang: AppLanguage = L10n.current) -> String? {
+        switch path {
+        case home: return L10n.t("home", lang)
+        case thisMac: return L10n.t("thisMac", lang)
+        default: return nil
+        }
+    }
+
+    /// Gõ "Trang chủ", "Home", "Máy Mac này", "This Mac" vào thanh địa chỉ.
+    public static func fromTyped(_ text: String) -> String? {
+        let t = text.trimmingCharacters(in: .whitespaces).lowercased()
+        for p in [home, thisMac] {
+            if AppLanguage.allCases.contains(where: { L10n.t(p == home ? "home" : "thisMac", $0).lowercased() == t }) || t == p { return p }
+        }
+        return nil
     }
 }
 
@@ -52,9 +78,15 @@ public enum Breadcrumb {
         "Pictures": "pictures", "Music": "music", "Movies": "videos"
     ]
 
+    public static var rootVolumeName: String {
+        (try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeLocalizedNameKey]).volumeLocalizedName) ?? "Macintosh HD"
+    }
+
     public static func crumbs(for path: String, home: String = NSHomeDirectory(), lang: AppLanguage = L10n.current) -> [Crumb] {
-        var result = [Crumb(title: L10n.t("thisMac", lang), path: "/")]
-        if path == "/" { return result }
+        if let t = SpecialLocation.title(path, lang: lang), path == SpecialLocation.home { return [Crumb(title: t, path: path)] }
+        var result = [Crumb(title: L10n.t("thisMac", lang), path: SpecialLocation.thisMac)]
+        if path == SpecialLocation.thisMac { return result }
+        if path == "/" { return result + [Crumb(title: rootVolumeName, path: "/")] }
         var base = ""
         var rest = path
         if path == home || path.hasPrefix(home + "/") {

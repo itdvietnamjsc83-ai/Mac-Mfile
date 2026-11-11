@@ -87,7 +87,7 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
         let blue = NSColor(srgbRed: 0x0f / 255, green: 0x6c / 255, blue: 0xbd / 255, alpha: 1)
         let folderTint = NSColor(srgbRed: 0xe8 / 255, green: 0xb0 / 255, blue: 0x2a / 255, alpha: 1)
         var e: [Entry] = [
-            Entry(title: L10n.t("home"), path: home, symbol: "house"),
+            Entry(title: L10n.t("home"), path: SpecialLocation.home, symbol: "house"),
         ]
         for (t, p) in Self.cloudFolders() { e.append(Entry(title: t, path: p, symbol: "cloud.fill", tint: blue)) }
         e.append(.sep)
@@ -99,7 +99,7 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
             e.append(Entry(title: title, path: p, symbol: "folder.fill", tint: folderTint, isPin: true, shortcut: i < 9 ? "⌘\(i + 1)" : ""))
         }
         e.append(.sep)
-        e.append(Entry(title: L10n.t("thisMac"), path: "/", symbol: "desktopcomputer", tint: blue))
+        e.append(Entry(title: L10n.t("thisMac"), path: SpecialLocation.thisMac, symbol: "desktopcomputer", tint: blue))
         for (t, p) in Self.volumes() { e.append(Entry(title: t, path: p, symbol: "externaldrive", tint: Theme.secondaryText)) }
         e.append(Entry(title: L10n.t("trash"), path: home + "/.Trash", symbol: "trash", tint: Theme.secondaryText))
         entries = e
@@ -214,6 +214,7 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
         add("open", #selector(menuOpen(_:)))
         add("openNewTab", #selector(menuNewTab(_:)))
         add("openNewWindow", #selector(menuNewWindow(_:)))
+        guard !SpecialLocation.isSpecial(p) else { return }
         menu.addItem(.separator())
         if entries[row].isPin { add("unpinQuick", #selector(menuUnpin(_:))) } else { add("pinQuick", #selector(menuPin(_:))) }
         add("copyPath", #selector(menuCopyPath(_:)))

@@ -30,6 +30,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     private var detailsToggle: FlatButton!, iconsToggle: FlatButton!
     private let sidebar = SidebarController()
     private let sidePane = SidePaneController()
+    private let specialPage = SpecialPageController()
+    var isSpecialPage: Bool { SpecialLocation.isSpecial(currentPath) }
     private var body: NSSplitView!
     private var paneButton: FlatButton!
     private let address = AddressField()
@@ -254,6 +256,12 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         let container = ColorView(.white)
         container.pin(scroll, insets: .init())
         container.pin(cs, insets: .init())
+        container.pin(specialPage.scroll, insets: .init())
+        specialPage.onOpen = { [weak self] p in self?.openPath(p) }
+        specialPage.onReveal = { [weak self] p in self?.navigate(to: p) }
+        specialPage.onOpenNewTab = { [weak self] p in (self?.view.window?.windowController as? MainWindowController)?.addTab(path: p) }
+        specialPage.onOpenNewWindow = { p in (NSApp.delegate as? AppDelegate)?.openWindow(at: p) }
+        specialPage.onSelectionChange = { [weak self] _ in self?.selectionChanged() }
         return container
     }
 
@@ -299,8 +307,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         viewMode = mode
         if remember { var p = viewPrefs; p.set(mode, for: currentPath); viewPrefs = p }
         let isTable = mode == .details
-        tableScroll.isHidden = !isTable
-        collectionScroll.isHidden = isTable
+        tableScroll.isHidden = !isTable || isSpecialPage
+        collectionScroll.isHidden = isTable || isSpecialPage
         table.rowHeight = compact ? 24 : Theme.rowHeight
         updateFlowLayout()
         reloadContent()
@@ -451,6 +459,11 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     // MARK: Điều hướng
 
     func navigate(to path: String) {
+        if SpecialLocation.isSpecial(path) {
+            history.visit(path)
+            load()
+            return
+        }
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
             showError(L10n.f("pathNotFound", path)); return
@@ -468,6 +481,23 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     func load(selecting: [String] = []) {
         search.stringValue = ""
+        let special = isSpecialPage
+        specialPage.scroll.isHidden = !special
+        if special {
+            tableScroll.isHidden = true
+            collectionScroll.isHidden = true
+            allItems = []
+            items = []
+            reloadContent()
+            specialPage.show(currentPath)
+            updateLocationUI()
+            sidebar.select(path: currentPath)
+            updateStatus()
+            sidePane.update(selection: selectedItems, folder: NSHomeDirectory())
+            return
+        }
+        tableScroll.isHidden = viewMode != .details
+        collectionScroll.isHidden = viewMode == .details
         let mode = viewPrefs.mode(for: currentPath)
         if mode != viewMode { setViewMode(mode, remember: false) }
         do {
@@ -498,7 +528,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     private func updateLocationUI() {
         let crumbs = Breadcrumb.crumbs(for: currentPath)
-        address.realPath = currentPath
+        address.realPath = SpecialLocation.title(currentPath) ?? currentPath
         address.displayText = crumbs.map(\.title).joined(separator: "  ›  ")
         let title = crumbs.last?.title ?? currentPath
         search.placeholderString = L10n.f("searchIn", title)
@@ -512,6 +542,11 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     func reloadTitle() { updateLocationUI() }
 
     private func updateStatus() {
+        if isSpecialPage {
+            let n = specialPage.selectedPaths.count
+            status.stringValue = n > 0 ? L10n.f("selected", n) : ""
+            return
+        }
         var s = L10n.f("items", Formatting.group(Int64(items.count)))
         let sel = selectedItems
         if !sel.isEmpty {
@@ -549,8 +584,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         let sel = selectedItems.map(\.path)
         load(selecting: sel)
     }
-    @objc func goHome(_ sender: Any?) { navigate(to: NSHomeDirectory()) }
-    @objc func goThisMac(_ sender: Any?) { navigate(to: "/") }
+    @objc func goHome(_ sender: Any?) { navigate(to: SpecialLocation.home) }
+    @objc func goThisMac(_ sender: Any?) { navigate(to: SpecialLocation.thisMac) }
 
     // MARK: Thanh địa chỉ (Mục 5.13)
 
@@ -560,6 +595,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     @objc func addressEntered(_ sender: Any?) {
         let text = address.stringValue
         view.window?.makeFirstResponder(table)
+        if let sp = SpecialLocation.fromTyped(text) { navigate(to: sp); return }
         switch PathParser.parse(text) {
         case .empty: address.restoreDisplay()
         case .remote(let s):
@@ -598,7 +634,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     @objc func copyAddress(_ sender: Any?) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(currentPath, forType: .string)
+        NSPasteboard.general.setString(address.realPath, forType: .string)
     }
 
     @objc func pasteAndGo(_ sender: Any?) {
@@ -611,10 +647,13 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     // MARK: Bảng Chi tiết
 
-    var selectedItems: [FileItem] { selectionIndexes.compactMap { items.indices.contains($0) ? items[$0] : nil } }
+    var selectedItems: [FileItem] {
+        if isSpecialPage { return specialPage.selectedPaths.compactMap { DirectoryReader.item(at: $0) } }
+        return selectionIndexes.compactMap { items.indices.contains($0) ? items[$0] : nil }
+    }
 
     private var targetItems: [FileItem] {
-        let clicked = clickedIndex
+        let clicked = isSpecialPage ? -1 : clickedIndex
         if clicked >= 0 && items.indices.contains(clicked) && !selectionIndexes.contains(clicked) { return [items[clicked]] }
         return selectedItems
     }
@@ -872,6 +911,14 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     // MARK: Lệnh tệp và thư mục
 
+    /// Mở một đường dẫn: thư mục thì vào trong, tệp thì mở bằng ứng dụng mặc định.
+    func openPath(_ p: String) {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: p, isDirectory: &isDir) else { showError(L10n.f("pathNotFound", p)); return }
+        if isDir.boolValue && !NSWorkspace.shared.isFilePackage(atPath: p) { navigate(to: p) }
+        else { NSWorkspace.shared.open(URL(fileURLWithPath: p)) }
+    }
+
     @objc func openSelected(_ sender: Any?) {
         let sel = targetItems
         if sel.count == 1, sel[0].isDirectory { navigate(to: sel[0].path); return }
@@ -893,7 +940,9 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     @objc func pinSelected(_ sender: Any?) {
         let sel = targetItems
-        if sel.isEmpty { Pins.pin(currentPath) } else { sel.forEach { Pins.pin($0.path) } }
+        // Windows: thư mục ghim vào Truy nhập nhanh, tệp thêm vào Ưa thích (hiện ở Trang chủ).
+        if sel.isEmpty { if !isSpecialPage { Pins.pin(currentPath) } }
+        else { sel.forEach { $0.isDirectory ? Pins.pin($0.path) : Favorites.add($0.path) } }
     }
 
     @objc func openPin(_ sender: NSMenuItem) {
@@ -903,7 +952,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     @objc func copyPath(_ sender: Any?) {
-        let paths = targetItems.isEmpty ? [currentPath] : targetItems.map(\.path)
+        let paths = targetItems.isEmpty ? (isSpecialPage ? [] : [currentPath]) : targetItems.map(\.path)
+        guard !paths.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(PathParser.copyText(for: paths), forType: .string)
         showMessage(L10n.f("copiedPaths", paths.count))
@@ -933,6 +983,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     /// Sao chép hoặc di chuyển; trùng tên thì giữ cả hai bằng cách thêm " (2)" (hộp thoại trùng tên đầy đủ ở bước sau).
     private func transfer(_ paths: [String], to dest: String, move: Bool) {
+        guard !SpecialLocation.isSpecial(dest) else { NSSound.beep(); return }
         let fm = FileManager.default
         var done: [String] = []
         for src in paths {
@@ -967,6 +1018,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     @objc func newFolder(_ sender: Any?) {
+        guard !isSpecialPage else { NSSound.beep(); return }
         let path = uniquePath(in: currentPath, name: L10n.t("newFolderName"))
         do {
             try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: false)
@@ -1147,6 +1199,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     @objc func newTextFile(_ sender: Any?) {
+        guard !isSpecialPage else { NSSound.beep(); return }
         let path = uniquePath(in: currentPath, name: L10n.t("newTextName"))
         if FileManager.default.createFile(atPath: path, contents: Data()) {
             load(selecting: [path])
