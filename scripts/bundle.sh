@@ -21,10 +21,14 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 # Phông: biểu tượng Fluent (MIT) đóng kèm sẵn; Selawik (OFL, thay cho Segoe UI) tải lúc build nếu được, lỗi thì bỏ qua.
 mkdir -p "$APP/Contents/Resources/Fonts"
 cp Resources/Fonts/* "$APP/Contents/Resources/Fonts/"
-if SEL="$(mktemp -d)" && git clone -q --depth 1 https://github.com/microsoft/Selawik "$SEL/s" 2>/dev/null; then
-  find "$SEL/s" \( -iname 'selaw*.ttf' -o -iname 'selaw*.otf' \) -exec cp {} "$APP/Contents/Resources/Fonts/" \; || true
-  find "$SEL/s" -maxdepth 1 -iname 'LICENSE*' -exec cp {} "$APP/Contents/Resources/Fonts/Selawik-LICENSE.txt" \; || true
-  find "$SEL/s" -maxdepth 2 -not -path '*/.git*' | head -40 || true
+# Kho Selawik chỉ có mã nguồn; bản .ttf nằm ở mục Releases.
+SEL="$(mktemp -d)"
+ASSET="$(curl -fsSL https://api.github.com/repos/microsoft/Selawik/releases/latest 2>/dev/null \
+  | grep -oE '"browser_download_url": *"[^"]+\.zip"' | head -1 | sed -E 's/.*"(https[^"]+)"/\1/' || true)"
+echo "Selawik: ${ASSET:-không tìm thấy bản phát hành}"
+if [ -n "$ASSET" ] && curl -fsSL "$ASSET" -o "$SEL/s.zip" && unzip -q "$SEL/s.zip" -d "$SEL/s"; then
+  find "$SEL/s" -iname '*.ttf' -exec cp {} "$APP/Contents/Resources/Fonts/" \; || true
+  find "$SEL/s" -iname 'LICENSE*' -exec cp {} "$APP/Contents/Resources/Fonts/Selawik-LICENSE.txt" \; || true
 fi
 ls "$APP/Contents/Resources/Fonts"
 
