@@ -260,3 +260,94 @@ final class FileNamingTests: XCTestCase {
         XCTAssertEqual(TransferStats.describe(seconds: 5, lang: .en), "About 5 seconds")
     }
 }
+
+final class ShortcutTests: XCTestCase {
+    func testParseAndDescribe() {
+        let k = KeyCombo("cmd+shift+n")!
+        XCTAssertTrue(k.command && k.shift && !k.option)
+        XCTAssertEqual(k.description, "Cmd+Shift+N")
+        XCTAssertEqual(KeyCombo("opt+left")!.description, "Option+←")
+        XCTAssertEqual(KeyCombo(k.stringValue), k)
+        XCTAssertNil(KeyCombo("hyper+x"))
+    }
+
+    func testDefaultsHaveNoConflicts() {
+        for p in ShortcutPreset.allCases {
+            XCTAssertTrue(ShortcutRegistry.conflicts(ShortcutRegistry.defaults(p)).isEmpty, p.rawValue)
+        }
+        for x in ShortcutRegistry.actions {
+            XCTAssertNotEqual(L10n.t(x.titleKey, .vi), x.titleKey, x.id)
+            XCTAssertNotEqual(L10n.t(x.category, .vi), x.category, x.category)
+        }
+    }
+
+    func testWindowsPresetUsesAltArrows() {
+        let b = ShortcutBindings(preset: .windows)
+        XCTAssertEqual(b.combo(for: "back"), KeyCombo("opt+left"))
+        XCTAssertEqual(ShortcutBindings().combo(for: "back"), KeyCombo("cmd+["))
+    }
+
+    func testConflictAndSuggestion() {
+        var b = ShortcutBindings()
+        let want = KeyCombo("cmd+t")!
+        XCTAssertEqual(ShortcutRegistry.owner(of: want, in: b.effective, except: "refresh"), "newTab")
+        XCTAssertEqual(ShortcutRegistry.owner(of: KeyCombo("shift+cmd+4")!, in: b.effective, except: "x")?.hasPrefix("system:"), true)
+        let s = ShortcutRegistry.suggest(for: want, in: b.effective, except: "refresh")
+        XCTAssertNotNil(s)
+        XCTAssertNil(ShortcutRegistry.owner(of: s!, in: b.effective, except: "refresh"))
+        b.set(s, for: "refresh")
+        XCTAssertEqual(b.combo(for: "refresh"), s)
+        b.set(nil, for: "refresh")
+        XCTAssertNil(b.combo(for: "refresh"))
+    }
+
+    func testExportImport() throws {
+        var b = ShortcutBindings(preset: .windows)
+        b.set(KeyCombo("cmd+k"), for: "openApp")
+        let back = try ShortcutBindings.importJSON(try b.exportJSON())
+        XCTAssertEqual(back, b)
+        XCTAssertEqual(back.combo(for: "openApp"), KeyCombo("cmd+k"))
+    }
+}
+
+#if os(macOS)
+final class ArchivePasswordTests: XCTestCase {
+    private func roundTrip(_ enc: ZipEncryption) throws {
+        let fm = FileManager.default
+        let dir = NSTemporaryDirectory() + "mfile-zip-" + UUID().uuidString
+        try fm.createDirectory(atPath: dir + "/Hồ sơ", withIntermediateDirectories: true)
+        try "bí mật".write(toFile: dir + "/Hồ sơ/thư.txt", atomically: true, encoding: .utf8)
+        let zip = dir + "/Hồ sơ.zip"
+        let made = ArchiveTool.createZip(names: ["Hồ sơ"], in: dir, dest: zip, password: "Mk@2026abc", encryption: enc)
+        XCTAssertTrue(made.ok, made.message)
+        XCTAssertNotNil(made.encryption)
+        print("Kiểu mã hóa yêu cầu \(enc.rawValue), đã dùng \(made.encryption?.rawValue ?? "-")")
+
+        let noPw = dir + "/khong"
+        try fm.createDirectory(atPath: noPw, withIntermediateDirectories: true)
+        let r0 = ArchiveTool.extract(zip, to: noPw)
+        XCTAssertFalse(fm.contents(atPath: noPw + "/Hồ sơ/thư.txt").flatMap { String(data: $0, encoding: .utf8) } == "bí mật",
+                       "Giải nén được khi không có mật khẩu: \(r0)")
+
+        let wrong = dir + "/sai"
+        try fm.createDirectory(atPath: wrong, withIntermediateDirectories: true)
+        XCTAssertFalse(ArchiveTool.extract(zip, to: wrong, password: "sai").0)
+
+        let ok = dir + "/dung"
+        try fm.createDirectory(atPath: ok, withIntermediateDirectories: true)
+        let r = ArchiveTool.extract(zip, to: ok, password: "Mk@2026abc")
+        XCTAssertTrue(r.0, r.1)
+        XCTAssertEqual(try String(contentsOfFile: ok + "/Hồ sơ/thư.txt", encoding: .utf8), "bí mật")
+        XCTAssertTrue(ArchiveTool.test(zip, password: "Mk@2026abc").0 || made.encryption == .aes256)
+    }
+
+    func testAES() throws { try roundTrip(.aes256) }
+    func testZipCrypto() throws { try roundTrip(.zipCrypto) }
+
+    func testStrength() {
+        XCTAssertEqual(PasswordStrength.score("123"), 0)
+        XCTAssertEqual(PasswordStrength.score("matkhau12"), 1)
+        XCTAssertEqual(PasswordStrength.score("Mk@2026abcdef"), 2)
+    }
+}
+#endif

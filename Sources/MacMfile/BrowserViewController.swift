@@ -838,6 +838,9 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
                 let it = add(key, #selector(compressAs(_:)), to: m)
                 it.representedObject = fmt
             }
+            m.addItem(.separator())
+            add("compressWithPassword", #selector(compressWithPassword(_:)), to: m)
+            add("compressMoreOptions", #selector(compressWithOptions(_:)), to: m)
         }
         add("copyPath", #selector(copyPath(_:)), "Cmd+Shift+C")
         add("properties", #selector(showInfo(_:)), "Option+Enter")
@@ -1243,21 +1246,38 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         return t[0]
     }
 
-    /// Giải nén vào thư mục đích; không ghi đè tệp đã có (-k).
-    private func extract(_ item: FileItem, into dest: String, createFolder: Bool) {
-        if createFolder {
+    /// Giải nén vào thư mục đích; không ghi đè tệp đã có. Tệp có mật khẩu thì hỏi (hoặc lấy từ Chuỗi khóa).
+    private func extract(_ item: FileItem, into dest: String, createFolder: Bool, password: String? = nil, triedKeychain: Bool = false) {
+        if createFolder && !FileManager.default.fileExists(atPath: dest) {
             do { try FileManager.default.createDirectory(atPath: dest, withIntermediateDirectories: true) }
             catch { showError(error.localizedDescription); return }
         }
+        var pw = password
+        var fromKeychain = false
+        if pw == nil && !triedKeychain, let k = ArchiveKeychain.password(for: item.path) { pw = k; fromKeychain = true }
         showMessage(L10n.f("extracting", item.name))
-        runTool("/usr/bin/tar", ["-xkf", item.path, "-C", dest]) { [weak self] ok, msg in
-            guard let self else { return }
-            if ok {
-                self.showMessage(L10n.f("extracted", (dest as NSString).lastPathComponent))
-                if dest == self.currentPath { self.refresh(nil) } else if (dest as NSString).deletingLastPathComponent == self.currentPath { self.load(selecting: [dest]) }
-            } else {
-                self.showError(L10n.f("archiveBad", item.name) + (msg.isEmpty ? "" : "\n\n" + msg))
-                self.refresh(nil)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let r = ArchiveTool.extract(item.path, to: dest, password: pw)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if r.0 {
+                    self.showMessage(L10n.f("extracted", (dest as NSString).lastPathComponent))
+                    if dest == self.currentPath { self.refresh(nil) } else if (dest as NSString).deletingLastPathComponent == self.currentPath { self.load(selecting: [dest]) }
+                } else if ArchiveTool.needsPassword(r.1) || pw != nil {
+                    PasswordPrompt.ask(for: item.path, wrong: pw != nil && !fromKeychain, on: self.view.window) { [weak self] entered, remember in
+                        guard let self else { return }
+                        guard let entered, !entered.isEmpty else {
+                            if createFolder { try? FileManager.default.removeItem(atPath: dest) }
+                            self.refresh(nil)
+                            return
+                        }
+                        if remember { ArchiveKeychain.save(entered, for: item.path) }
+                        self.extract(item, into: dest, createFolder: createFolder, password: entered, triedKeychain: true)
+                    }
+                } else {
+                    self.showError(L10n.f("archiveBad", item.name) + (r.1.isEmpty ? "" : "\n\n" + r.1))
+                    self.refresh(nil)
+                }
             }
         }
     }
@@ -1320,25 +1340,50 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         guard let first = sel.first else { NSSound.beep(); return }
         let dir = (first.path as NSString).deletingLastPathComponent
         let base = first.isDirectory ? first.name : (first.name as NSString).deletingPathExtension
-        let dest = uniquePath(in: dir, name: base + "." + format)
-        let names = sel.map(\.name)
-        let tool: String
-        let args: [String]
-        switch format {
-        case "7z": tool = "/usr/bin/tar"; args = ["--format", "7zip", "-cf", dest] + names
-        case "tar": tool = "/usr/bin/tar"; args = ["-cf", dest] + names
-        case "tar.gz": tool = "/usr/bin/tar"; args = ["-czf", dest] + names
-        default: tool = "/usr/bin/zip"; args = ["-r", "-y", "-q", dest] + names
+        runCompress(sel, name: (uniquePath(in: dir, name: base + "." + format) as NSString).lastPathComponent,
+                    format: format, password: nil, encryption: .aes256)
+    }
+
+    /// Nén có đặt mật khẩu / Tùy chọn khác…: mở hộp Nén (bản mẫu bảng 25).
+    @objc func compressWithPassword(_ sender: Any?) { showCompressDialog(password: true) }
+    @objc func compressWithOptions(_ sender: Any?) { showCompressDialog(password: false) }
+
+    private func showCompressDialog(password: Bool) {
+        let sel = targetItems
+        guard let first = sel.first, let w = view.window else { NSSound.beep(); return }
+        let base = first.isDirectory ? first.name : (first.name as NSString).deletingPathExtension
+        CompressDialog.run(count: sel.count, defaultName: base, password: password, on: w) { [weak self] c in
+            self?.runCompress(sel, name: c.name, format: c.format, password: c.password, encryption: c.encryption)
         }
+    }
+
+    private func runCompress(_ sel: [FileItem], name: String, format: String, password: String?, encryption: ZipEncryption) {
+        guard let first = sel.first else { return }
+        let dir = (first.path as NSString).deletingLastPathComponent
+        let dest = uniquePath(in: dir, name: name)
+        let names = sel.map(\.name)
         showMessage(L10n.f("compressing", sel.count))
-        runTool(tool, args, cwd: dir) { [weak self] ok, msg in
-            guard let self else { return }
-            if ok {
-                self.showMessage(L10n.f("compressed", (dest as NSString).lastPathComponent))
-                self.load(selecting: [dest])
-            } else {
-                try? FileManager.default.removeItem(atPath: dest)
-                self.showError(msg)
+        DispatchQueue.global(qos: .userInitiated).async {
+            var ok: Bool, msg: String, used: ZipEncryption? = nil
+            switch format {
+            case "7z": (ok, msg) = ArchiveTool.run("/usr/bin/tar", ["--format", "7zip", "-cf", dest] + names, cwd: dir)
+            case "tar": (ok, msg) = ArchiveTool.run("/usr/bin/tar", ["-cf", dest] + names, cwd: dir)
+            case "tar.gz": (ok, msg) = ArchiveTool.run("/usr/bin/tar", ["-czf", dest] + names, cwd: dir)
+            default:
+                let o = ArchiveTool.createZip(names: names, in: dir, dest: dest, password: password, encryption: encryption)
+                ok = o.ok; msg = o.message; used = o.encryption
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if ok {
+                    var text = L10n.f("compressed", (dest as NSString).lastPathComponent)
+                    if password != nil && encryption == .aes256 && used == .zipCrypto { text += " · " + L10n.t("aesFallback") }
+                    self.showMessage(text)
+                    self.load(selecting: [dest])
+                } else {
+                    try? FileManager.default.removeItem(atPath: dest)
+                    self.showError(msg)
+                }
             }
         }
     }
