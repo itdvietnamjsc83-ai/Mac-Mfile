@@ -121,6 +121,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func toggleLanguage(_ sender: Any?) { L10n.current = L10n.current.toggled }
 
+    @objc func showAbout(_ sender: Any?) { AboutWindowController.show() }
+
     @objc func showShortcuts(_ sender: Any?) {
         let vi = L10n.current == .vi
         let rows: [(String, String)] = [
@@ -170,7 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let appMenu = NSMenuItem()
         let am = NSMenu()
-        am.addItem(item("about", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""))
+        am.addItem(item("about", #selector(showAbout(_:)), ""))
         am.addItem(.separator())
         am.addItem(item("language", #selector(toggleLanguage(_:)), ""))
         am.addItem(.separator())
@@ -254,6 +256,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let help = submenu("menuHelp", [
             item("shortcuts", #selector(showShortcuts(_:)), "/"),
+            .separator(),
+            item("aboutTitle", #selector(showAbout(_:)), ""),
         ])
         main.addItem(help)
 
