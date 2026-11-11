@@ -153,7 +153,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: Xếp cửa sổ nửa màn hình (FR-47, Mục 5.10)
 
-    func snap(side: Int) {
+    @objc func snapLeftFromChooser(_ sender: Any?) { SnapLayoutPopover.hide(); snap(side: -1) }
+    @objc func snapRightFromChooser(_ sender: Any?) { SnapLayoutPopover.hide(); snap(side: 1) }
+
+    func snap(side: Int, offerAssist: Bool = true) {
         guard let window, let screen = window.screen ?? NSScreen.main else { return }
         if snappedSide == side, let r = restoreFrame {
             window.setFrame(r, display: true, animate: true)
@@ -180,6 +183,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let half = NSRect(x: side < 0 ? v.minX : v.midX, y: v.minY, width: v.width / 2, height: v.height)
         window.setFrame(half, display: true, animate: true)
         snappedSide = side
+        if offerAssist { SnapAssist.offer(after: self, side: side, screen: screen) }
     }
 
     private func neighbor(of screen: NSScreen, side: Int) -> NSScreen? {
@@ -258,8 +262,16 @@ final class WindowButton: NSButton {
         addTrackingArea(a)
         area = a
     }
-    override func mouseEntered(with event: NSEvent) { hovering = true }
-    override func mouseExited(with event: NSEvent) { hovering = false }
+    private var hoverTimer: Timer?
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        guard kind == .maximize else { return }
+        hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.45, repeats: false) { [weak self] _ in
+            guard let self, self.hovering, let wc = self.window?.windowController as? MainWindowController else { return }
+            SnapLayoutPopover.show(for: self, controller: wc)
+        }
+    }
+    override func mouseExited(with event: NSEvent) { hovering = false; hoverTimer?.invalidate() }
 
     override func draw(_ dirtyRect: NSRect) {
         if hovering {

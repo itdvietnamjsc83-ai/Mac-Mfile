@@ -35,6 +35,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     private var body: NSSplitView!
     private var paneButton: FlatButton!
     private let address = AddressField()
+    private let breadcrumb = BreadcrumbBar()
     private let search = NSSearchField()
     private let status = label("")
     private let message = label("", color: Theme.accent)
@@ -139,6 +140,15 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         stack.translatesAutoresizingMaskIntoConstraints = false
         bar.pin(stack, insets: .init(top: 7, left: 10, bottom: 7, right: 10))
         address.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        bar.addSubview(breadcrumb)
+        NSLayoutConstraint.activate([
+            breadcrumb.leadingAnchor.constraint(equalTo: address.leadingAnchor, constant: 2),
+            breadcrumb.trailingAnchor.constraint(equalTo: address.trailingAnchor, constant: -2),
+            breadcrumb.topAnchor.constraint(equalTo: address.topAnchor, constant: 2),
+            breadcrumb.bottomAnchor.constraint(equalTo: address.bottomAnchor, constant: -2),
+        ])
+        breadcrumb.onNavigate = { [weak self] p in self?.navigate(to: p) }
+        breadcrumb.onEdit = { [weak self] in self?.focusAddress(nil) }
         return bar
     }
 
@@ -189,12 +199,13 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     private func buildTable() -> NSView {
-        let columns: [(String, String, CGFloat)] = [("name", "colName", 380), ("modified", "colModified", 150), ("type", "colType", 140), ("size", "colSize", 90)]
+        let columns: [(String, String, CGFloat)] = [("name", "colName", 380), ("folder", "colFolder", 220), ("modified", "colModified", 150), ("type", "colType", 140), ("size", "colSize", 90)]
         for (id, _, w) in columns {
             let c = NSTableColumn(identifier: .init(id))
             c.width = w
             c.minWidth = 60
-            c.sortDescriptorPrototype = NSSortDescriptor(key: id, ascending: true)
+            c.sortDescriptorPrototype = id == "folder" ? nil : NSSortDescriptor(key: id, ascending: true)
+            c.isHidden = id == "folder"
             table.addTableColumn(c)
         }
         table.rowHeight = Theme.rowHeight
@@ -491,7 +502,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         fwdB.toolTip = L10n.t("forward") + " (Cmd+])"
         upB.toolTip = L10n.t("up") + " (Cmd+↑)"
         refreshB.toolTip = L10n.t("refresh") + " (F5)"
-        let headers = ["name": "colName", "modified": "colModified", "type": "colType", "size": "colSize"]
+        let headers = ["name": "colName", "folder": "colFolder", "modified": "colModified", "type": "colType", "size": "colSize"]
         for c in table.tableColumns { c.title = L10n.t(headers[c.identifier.rawValue] ?? "") }
         if let m = address.menu {
             m.items[0].title = L10n.t("copyAddress")
@@ -552,6 +563,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     func load(selecting: [String] = []) {
         search.stringValue = ""
+        searchGeneration += 1
+        searchResults = nil
         let special = isSpecialPage
         specialPage.scroll.isHidden = !special
         if special {
@@ -587,20 +600,55 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         sidePane.update(selection: selectedItems, folder: currentPath)
     }
 
+    private var searchGeneration = 0
+    private var searchResults: [FileItem]?
+    private var isSearching: Bool { !search.stringValue.trimmingCharacters(in: .whitespaces).isEmpty }
+
     private func applySortAndFilter() {
         let q = search.stringValue.trimmingCharacters(in: .whitespaces)
         var list = allItems
         if !q.isEmpty {
-            list = list.filter { $0.name.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+            list = searchResults ?? list.filter { RecursiveSearch.matches($0.name, q) }
         }
         items = FileSorting.sort(list, by: sortKey, ascending: ascending)
+        table.tableColumn(withIdentifier: .init("folder"))?.isHidden = q.isEmpty || !Settings.searchSubfolders
         reloadContent()
+    }
+
+    /// Tìm cả thư mục con ở luồng nền (Mục 5.8, bản mẫu bảng 12, 14); gõ tiếp thì hủy lượt cũ.
+    private func startSearch() {
+        searchGeneration += 1
+        searchResults = nil
+        let gen = searchGeneration
+        let q = search.stringValue.trimmingCharacters(in: .whitespaces)
+        applySortAndFilter()
+        guard !q.isEmpty, Settings.searchSubfolders, !isSpecialPage else { updateStatus(); return }
+        status.stringValue = L10n.t("searching")
+        let root = currentPath, hidden = showHidden
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self, gen == self.generationSnapshot() else { return }
+            let found = RecursiveSearch.run(in: root, query: q, showHidden: hidden) { [weak self] in gen != self?.generationSnapshot() }
+            DispatchQueue.main.async {
+                guard gen == self.searchGeneration else { return }
+                self.searchResults = found
+                self.applySortAndFilter()
+                self.updateStatus()
+            }
+        }
+    }
+
+    private func generationSnapshot() -> Int {
+        if Thread.isMainThread { return searchGeneration }
+        return DispatchQueue.main.sync { searchGeneration }
     }
 
     private func updateLocationUI() {
         let crumbs = Breadcrumb.crumbs(for: currentPath)
         address.realPath = SpecialLocation.title(currentPath) ?? currentPath
         address.displayText = crumbs.map(\.title).joined(separator: "  ›  ")
+        breadcrumb.show(crumbs)
+        if view.window?.firstResponder !== address.currentEditor() { breadcrumb.isHidden = false }
+        BreadcrumbBar.remember(currentPath)
         let title = crumbs.last?.title ?? currentPath
         search.placeholderString = L10n.f("searchIn", title)
         backB.isEnabled = history.canGoBack
@@ -618,7 +666,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             status.stringValue = n > 0 ? L10n.f("selected", n) : ""
             return
         }
-        var s = L10n.f("items", Formatting.group(Int64(items.count)))
+        var s = isSearching ? (items.isEmpty ? L10n.t("noSearchResults") : L10n.f("searchResultCount", Formatting.group(Int64(items.count))))
+                            : L10n.f("items", Formatting.group(Int64(items.count)))
         let sel = selectedItems
         if !sel.isEmpty {
             s += "    " + L10n.f("selected", sel.count)
@@ -660,7 +709,10 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     // MARK: Thanh địa chỉ (Mục 5.13)
 
-    @objc func focusAddress(_ sender: Any?) { view.window?.makeFirstResponder(address) }
+    @objc func focusAddress(_ sender: Any?) {
+        breadcrumb.isHidden = true
+        view.window?.makeFirstResponder(address)
+    }
     @objc func editAddress(_ sender: Any?) { focusAddress(sender) }
 
     @objc func addressEntered(_ sender: Any?) {
@@ -684,7 +736,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
-        if (obj.object as? AddressField) === address { address.restoreDisplay() }
+        if (obj.object as? AddressField) === address { address.restoreDisplay(); breadcrumb.isHidden = false }
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -697,10 +749,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     func controlTextDidChange(_ obj: Notification) {
-        if (obj.object as? NSSearchField) === search {
-            applySortAndFilter()
-            updateStatus()
-        }
+        if (obj.object as? NSSearchField) === search { startSearch() }
     }
 
     @objc func copyAddress(_ sender: Any?) {
@@ -751,6 +800,12 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             if Self.cutPaths.contains(it.path) { icon.alphaValue = 0.5 }
         case "modified": t = label(Formatting.date(it.modified), color: Theme.secondaryText)
         case "type": t = label(it.typeDescription(), color: Theme.secondaryText)
+        case "folder":
+            let parent = (it.path as NSString).deletingLastPathComponent
+            let rel = parent == currentPath ? "." : (parent.hasPrefix(currentPath + "/") ? String(parent.dropFirst(currentPath.count + 1)) : parent)
+            t = label(rel, color: Theme.secondaryText)
+            t.lineBreakMode = .byTruncatingMiddle
+            t.toolTip = parent
         default:
             t = label(it.isDirectory ? "" : Formatting.size(it.size), color: Theme.secondaryText)
             t.alignment = .right

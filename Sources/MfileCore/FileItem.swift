@@ -87,3 +87,36 @@ public enum DirectoryReader {
             )
     }
 }
+
+/// Tìm tên tệp trong thư mục và mọi thư mục con (Mục 5.8), không phân biệt hoa thường, dấu, đ/d.
+public enum RecursiveSearch {
+    public static func fold(_ s: String) -> String {
+        s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "vi"))
+            .replacingOccurrences(of: "đ", with: "d")
+    }
+
+    public static func matches(_ name: String, _ query: String) -> Bool {
+        let q = fold(query).split(separator: " ")
+        let n = fold(name)
+        return !q.isEmpty && q.allSatisfy { n.contains($0) }
+    }
+
+    public static func run(in root: String, query: String, showHidden: Bool = false, limit: Int = 2000,
+                           isCancelled: () -> Bool = { false }) -> [FileItem] {
+        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .isHiddenKey, .isPackageKey]
+        var opts: FileManager.DirectoryEnumerationOptions = [.skipsPackageDescendants]
+        if !showHidden { opts.insert(.skipsHiddenFiles) }
+        guard let e = FileManager.default.enumerator(at: URL(fileURLWithPath: root), includingPropertiesForKeys: keys, options: opts, errorHandler: { _, _ in true }) else { return [] }
+        var out: [FileItem] = []
+        var n = 0
+        while let u = e.nextObject() as? URL {
+            n += 1
+            if n % 200 == 0 && isCancelled() { break }
+            let name = u.lastPathComponent.precomposedStringWithCanonicalMapping
+            guard matches(name, query) else { continue }
+            if let it = DirectoryReader.item(at: u.path) { out.append(it) }
+            if out.count >= limit { break }
+        }
+        return out
+    }
+}

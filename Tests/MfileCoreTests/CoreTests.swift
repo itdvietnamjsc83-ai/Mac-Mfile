@@ -365,3 +365,17 @@ final class HelpTests: XCTestCase {
         XCTAssertEqual(Set(HelpTopics.all.map(\.id)).count, HelpTopics.all.count)
     }
 }
+
+final class RecursiveSearchTests: XCTestCase {
+    func testFindsInSubfolders() throws {
+        let fm = FileManager.default
+        let root = NSTemporaryDirectory() + "mfile-search-" + UUID().uuidString
+        try fm.createDirectory(atPath: root + "/Dự án/Hồ sơ", withIntermediateDirectories: true)
+        fm.createFile(atPath: root + "/Dự án/Hồ sơ/Đề xuất ngân sách.docx", contents: Data())
+        fm.createFile(atPath: root + "/khac.txt", contents: Data())
+        let r = RecursiveSearch.run(in: root, query: "de xuat ngan sach")
+        XCTAssertEqual(r.map(\.name), ["Đề xuất ngân sách.docx"])
+        XCTAssertTrue(RecursiveSearch.matches("Hồ sơ dự thầu", "HO SO"))
+        XCTAssertFalse(RecursiveSearch.matches("abc", ""))
+    }
+}
