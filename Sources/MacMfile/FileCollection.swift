@@ -10,6 +10,7 @@ final class FileCollectionView: NSCollectionView {
     var onRename: (() -> Void)?
     var onQuickLook: (() -> Void)?
     var onProperties: (() -> Void)?
+    var onBack: (() -> Void)?
     /// Chỉ số mục vừa nhấp chuột phải (-1 nếu nhấp vào chỗ trống).
     private(set) var clickedIndex = -1
 
@@ -18,9 +19,12 @@ final class FileCollectionView: NSCollectionView {
         switch event.keyCode {
         case 36, 76: if flags.contains(.option) { onProperties?() } else { onOpen?() }
         case 51, 117:
-            if flags.contains(.shift) || flags == [.command, .option] { onDeleteForever?() }
-            else if flags.isEmpty || flags == .command || flags == .function { onTrash?() }
-            else { super.keyDown(with: event) }
+            switch DeleteKeys.action(keyCode: event.keyCode, flags: flags) {
+            case .back: onBack?()
+            case .trash: onTrash?()
+            case .deleteForever: onDeleteForever?()
+            case .none: super.keyDown(with: event)
+            }
         case 120: onRename?()
         case 49 where flags.isEmpty: onQuickLook?()
         default: super.keyDown(with: event)

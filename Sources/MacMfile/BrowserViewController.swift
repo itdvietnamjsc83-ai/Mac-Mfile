@@ -216,6 +216,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         table.onRename = { [weak self] in self?.renameSelected(nil) }
         table.onQuickLook = { [weak self] in self?.quickLook(nil) }
         table.onProperties = { [weak self] in self?.showInfo(nil) }
+        table.onBack = { [weak self] in self?.goBack(nil) }
 
         let scroll = NSScrollView()
         scroll.documentView = table
@@ -244,6 +245,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         collection.onRename = { [weak self] in self?.renameSelected(nil) }
         collection.onQuickLook = { [weak self] in self?.quickLook(nil) }
         collection.onProperties = { [weak self] in self?.showInfo(nil) }
+        collection.onBack = { [weak self] in self?.goBack(nil) }
         let cs = NSScrollView()
         cs.documentView = collection
         cs.hasVerticalScroller = true
@@ -787,7 +789,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             ("doc.on.doc", L10n.t("copy") + " (Cmd+C)", #selector(copy(_:))),
             ("character.cursor.ibeam", L10n.t("rename") + " (F2)", #selector(renameSelected(_:))),
             ("square.and.arrow.up", L10n.t("share"), #selector(shareSelected(_:))),
-            ("trash", L10n.t("delete") + " (⌫)", #selector(trashSelected(_:))),
+            ("trash", L10n.t("delete") + (DeleteKeys.backspaceGoesBack ? " (Delete)" : " (⌫)"), #selector(trashSelected(_:))),
         ])
         menu.addItem(iconRow)
         menu.addItem(.separator())
@@ -906,8 +908,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             m.addItem(.separator())
             add("createShortcut", #selector(createShortcut(_:)), to: m)
             add("duplicate", #selector(duplicateSelected(_:)), "Cmd+D", to: m)
-            add("delete", #selector(trashSelected(_:)), "⌫", to: m)
-            add("deleteForever", #selector(deleteForever(_:)), "Shift+⌫", to: m)
+            add("delete", #selector(trashSelected(_:)), DeleteKeys.backspaceGoesBack ? "Delete" : "⌫", to: m)
+            add("deleteForever", #selector(deleteForever(_:)), "Shift+Delete", to: m)
             add("rename", #selector(renameSelected(_:)), "F2", to: m)
             m.addItem(.separator())
             add("properties", #selector(showInfo(_:)), "Option+Enter", to: m)
