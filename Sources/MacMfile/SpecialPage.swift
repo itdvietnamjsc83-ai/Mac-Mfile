@@ -31,7 +31,7 @@ final class SpecialPageController: NSObject {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = true
-        scroll.backgroundColor = .white
+        scroll.backgroundColor = Theme.background
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.isHidden = true
         scroll.postsFrameChangedNotifications = true
@@ -312,7 +312,7 @@ final class TileView: NSView, SelectablePageItem {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        if isSel { Theme.selection.setFill() } else if hover { NSColor(white: 0.95, alpha: 1).setFill() } else { NSColor.clear.setFill() }
+        if isSel { Theme.selection.setFill() } else if hover { Theme.hover.setFill() } else { NSColor.clear.setFill() }
         NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         if let u = usage {
             let bar = NSRect(x: 60, y: 32, width: bounds.width - 70, height: 8)

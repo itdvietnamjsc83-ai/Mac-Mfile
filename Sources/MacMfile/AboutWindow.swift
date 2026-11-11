@@ -39,7 +39,7 @@ final class AboutWindowController: NSWindowController {
     private func rebuild() {
         guard let w = window else { return }
         w.title = L10n.t("aboutTitle")
-        let root = ColorView(.white)
+        let root = ColorView(Theme.background)
         w.contentView = root
 
         let icon = NSImageView(image: NSApp.applicationIconImage)

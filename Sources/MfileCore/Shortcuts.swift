@@ -91,6 +91,7 @@ public enum ShortcutRegistry {
         a("undo", "catEdit", "cmd+z"),
         a("redo", "catEdit", "cmd+y"),
         a("refresh", "catView", "cmd+r"),
+        a("toggleTheme", "catView", "cmd+shift+l"),
         a("compactView", "catView", nil),
         a("hiddenItems", "catView", "cmd+shift+."),
         a("previewPane", "catView", "opt+p"),

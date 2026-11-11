@@ -27,7 +27,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     private var collectionScroll: NSScrollView!
     private(set) var viewMode: ViewMode = .details
     private var compact = UserDefaults.standard.bool(forKey: "MacMfile.compact")
-    private var detailsToggle: FlatButton!, iconsToggle: FlatButton!
+    private var detailsToggle: FlatButton!, iconsToggle: FlatButton!, themeButton: FlatButton!
     private let sidebar = SidebarController()
     private let sidePane = SidePaneController()
     private let specialPage = SpecialPageController()
@@ -52,7 +52,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     // MARK: Dựng giao diện
 
     override func loadView() {
-        let root = ColorView(.white)
+        let root = ColorView(Theme.background)
         root.frame = NSRect(x: 0, y: 0, width: 1280, height: 720)
 
         let nav = buildNavBar()
@@ -230,7 +230,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         collection.collectionViewLayout = flow
         collection.isSelectable = true
         collection.allowsMultipleSelection = true
-        collection.backgroundColors = [.white]
+        collection.backgroundColors = [Theme.background]
         collection.register(FileCellItem.self, forItemWithIdentifier: FileCellItem.id)
         collection.dataSource = self
         collection.delegate = self
@@ -257,7 +257,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         NotificationCenter.default.addObserver(self, selector: #selector(contentResized), name: NSView.frameDidChangeNotification, object: cs)
         collectionScroll = cs
 
-        let container = ColorView(.white)
+        let container = ColorView(Theme.background)
         container.pin(scroll, insets: .init())
         container.pin(cs, insets: .init())
         container.pin(specialPage.scroll, insets: .init())
@@ -416,17 +416,19 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     private func buildStatusBar() -> NSView {
-        let bar = ColorView(.white)
+        let bar = ColorView(Theme.background)
         langButton.target = self
         langButton.action = #selector(toggleLanguage(_:))
         langButton.font = Theme.font(11, weight: .semibold)
         detailsToggle = FlatButton(title: "", symbol: "list.bullet", target: self, action: #selector(viewDetails(_:)))
         iconsToggle = FlatButton(title: "", symbol: "square.grid.2x2", target: self, action: #selector(viewLargeIcons(_:)))
-        let stack = NSStackView(views: [status, message, NSView(), detailsToggle, iconsToggle, langButton])
+        themeButton = FlatButton(title: "", symbol: Theme.isDark ? "moon" : "sun.max", target: self, action: #selector(toggleTheme(_:)))
+        NotificationCenter.default.addObserver(self, selector: #selector(appearanceChanged), name: Theme.appearanceChanged, object: nil)
+        let stack = NSStackView(views: [status, message, NSView(), langButton, themeButton, detailsToggle, iconsToggle])
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
         bar.pin(stack, insets: .init(top: 0, left: 12, bottom: 0, right: 8))
-        for b in [langButton, detailsToggle!, iconsToggle!] { b.fixedHeight.constant = 22 }
+        for b in [langButton, detailsToggle!, iconsToggle!, themeButton!] { b.fixedHeight.constant = 22 }
         return bar
     }
 
@@ -454,11 +456,23 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         detailsToggle.toolTip = L10n.t("view_details") + " (Ctrl+Shift+6)"
         iconsToggle.toolTip = L10n.t("view_largeIcons") + " (Ctrl+Shift+2)"
+        themeButton.toolTip = L10n.t(Theme.isDark ? "themeToLight" : "themeToDark") + " (Cmd+Shift+L)"
         langButton.title = L10n.current == .vi ? "VI" : "EN"
         langButton.toolTip = L10n.t("language")
     }
 
     @objc func toggleLanguage(_ sender: Any?) { L10n.current = L10n.current.toggled }
+
+    /// Nút ☀/☾: đổi nhanh giao diện Sáng/Tối (Cmd+Shift+L).
+    @objc func toggleTheme(_ sender: Any?) { Theme.toggleAppearance() }
+
+    @objc private func appearanceChanged() {
+        themeButton?.image = Theme.symbol(Theme.isDark ? "moon" : "sun.max")
+        themeButton?.toolTip = L10n.t(Theme.isDark ? "themeToLight" : "themeToDark") + " (Cmd+Shift+L)"
+        view.needsDisplay = true
+        view.subviews.forEach { $0.needsDisplay = true }
+        reloadContent()
+    }
 
     // MARK: Điều hướng
 

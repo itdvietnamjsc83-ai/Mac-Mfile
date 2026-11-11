@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let firstRunKey = "MacMfile.firstRunDone"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Theme.apply()
         buildMainMenu()
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: L10n.didChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: Pins.didChange, object: nil)
@@ -280,6 +281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewItems += [
             item("compactView", #selector(BrowserViewController.toggleCompact(_:)), ""),
             item("hiddenItems", #selector(BrowserViewController.toggleHidden(_:)), ".", [.command, .shift]),
+            item("toggleTheme", #selector(BrowserViewController.toggleTheme(_:)), "l", [.command, .shift]),
             item("previewPane", #selector(BrowserViewController.togglePreviewPane(_:)), "p", [.option]),
             item("detailsPane", #selector(BrowserViewController.toggleDetailsPane(_:)), "p", [.option, .shift]),
             .separator(),

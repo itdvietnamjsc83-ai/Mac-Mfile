@@ -54,7 +54,7 @@ final class ShortcutsWindowController: NSWindowController, NSWindowDelegate, NST
     private func build() {
         guard let w = window else { return }
         w.title = L10n.t("shortcutWindowTitle")
-        let root = ColorView(.white)
+        let root = ColorView(Theme.background)
         w.contentView = root
 
         preset.addItems(withTitles: [L10n.t("presetMac"), L10n.t("presetWindows")])

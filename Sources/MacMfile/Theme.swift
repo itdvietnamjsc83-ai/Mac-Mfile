@@ -2,14 +2,43 @@ import AppKit
 
 /// Màu, phông, kích thước đo theo Windows 11 File Explorer (Mục 2.3, bản mẫu đã duyệt).
 enum Theme {
-    static let accent = NSColor(srgbRed: 0x00 / 255, green: 0x5f / 255, blue: 0xb8 / 255, alpha: 1)
-    static let tabStrip = NSColor(srgbRed: 0xe8 / 255, green: 0xe8 / 255, blue: 0xe8 / 255, alpha: 1)
-    static let chrome = NSColor(srgbRed: 0xf9 / 255, green: 0xf9 / 255, blue: 0xf9 / 255, alpha: 1)
-    static let border = NSColor(srgbRed: 0xe5 / 255, green: 0xe5 / 255, blue: 0xe5 / 255, alpha: 1)
-    static let selection = NSColor(srgbRed: 0xcc / 255, green: 0xe4 / 255, blue: 0xf7 / 255, alpha: 1)
-    static let secondaryText = NSColor(srgbRed: 0x6b / 255, green: 0x6b / 255, blue: 0x6b / 255, alpha: 1)
-    static let text = NSColor(srgbRed: 0x1a / 255, green: 0x1a / 255, blue: 0x1a / 255, alpha: 1)
+    /// Màu theo giao diện Sáng/Tối của Windows 11 (bản mẫu bảng 1 và 28).
+    private static func dyn(_ light: UInt32, _ dark: UInt32) -> NSColor {
+        func c(_ v: UInt32) -> NSColor {
+            NSColor(srgbRed: CGFloat((v >> 16) & 0xff) / 255, green: CGFloat((v >> 8) & 0xff) / 255, blue: CGFloat(v & 0xff) / 255, alpha: 1)
+        }
+        let l = c(light), d = c(dark)
+        return NSColor(name: nil) { ap in ap.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? d : l }
+    }
+    static let accent = dyn(0x005fb8, 0x4cc2ff)
+    static let tabStrip = dyn(0xe8e8e8, 0x1a1a1a)
+    static let chrome = dyn(0xf9f9f9, 0x202020)
+    static let background = dyn(0xffffff, 0x1c1c1c)
+    static let border = dyn(0xe5e5e5, 0x333333)
+    static let selection = dyn(0xcce4f7, 0x0e3a5c)
+    static let hover = dyn(0xf2f2f2, 0x2d2d2d)
+    static let secondaryText = dyn(0x6b6b6b, 0xa8a8a8)
+    static let text = dyn(0x1a1a1a, 0xffffff)
     static let closeHover = NSColor(srgbRed: 0xc4 / 255, green: 0x2b / 255, blue: 0x1c / 255, alpha: 1)
+
+    /// Sáng / Tối / Theo hệ thống; nút ☀/☾ ở thanh trạng thái đổi nhanh (Cmd+Shift+L).
+    enum Appearance: String { case system, light, dark }
+    static let appearanceKey = "MacMfile.appearance"
+    static var appearance: Appearance {
+        get { Appearance(rawValue: UserDefaults.standard.string(forKey: appearanceKey) ?? "") ?? .system }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: appearanceKey); apply() }
+    }
+    static func apply() {
+        switch appearance {
+        case .system: NSApp.appearance = nil
+        case .light: NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+        NotificationCenter.default.post(name: appearanceChanged, object: nil)
+    }
+    static let appearanceChanged = Notification.Name("MacMfile.appearanceChanged")
+    static var isDark: Bool { NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }
+    static func toggleAppearance() { appearance = isDark ? .light : .dark }
 
     static let rowHeight: CGFloat = 32
 
@@ -58,7 +87,7 @@ final class DragView: ColorView {
 
 /// Nút phẳng kiểu thanh lệnh Windows 11: đổi nền khi di chuột.
 class FlatButton: NSButton {
-    var hoverColor = NSColor(srgbRed: 0xeb / 255, green: 0xeb / 255, blue: 0xeb / 255, alpha: 1)
+    var hoverColor = Theme.hover
     private var hovering = false { didSet { needsDisplay = true } }
     private var area: NSTrackingArea?
     private(set) var fixedHeight: NSLayoutConstraint!

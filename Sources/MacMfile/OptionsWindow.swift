@@ -43,7 +43,7 @@ final class OptionsWindowController: NSWindowController, NSWindowDelegate, NSTab
     private func build() {
         guard let w = window else { return }
         w.title = L10n.t("optionsTitle")
-        let root = ColorView(.white)
+        let root = ColorView(Theme.background)
         w.contentView = root
         let left = ColorView(Theme.chrome)
         search.placeholderString = L10n.t("searchSettings")
@@ -176,6 +176,11 @@ final class OptionsWindowController: NSWindowController, NSWindowDelegate, NSTab
         popup(0, "language", "languageSub", items: ["langVI", "langEN"], selected: L10n.current == .vi ? 0 : 1) { i in
             let l: AppLanguage = i == 0 ? .vi : .en
             if L10n.current != l { L10n.current = l }
+        }
+        popup(0, "themeOpt", "themeOptSub", items: ["themeSystem", "themeLight", "themeDark"],
+              selected: ["system", "light", "dark"].firstIndex(of: Theme.appearance.rawValue) ?? 0) { i in
+            let a: Theme.Appearance = [.system, .light, .dark][i]
+            if Theme.appearance != a { Theme.appearance = a }
         }
         popup(0, "density", "densitySub", items: ["densityComfort", "densityCompact"], selected: UserDefaults.standard.bool(forKey: "MacMfile.compact") ? 1 : 0) {
             UserDefaults.standard.set($0 == 1, forKey: "MacMfile.compact")

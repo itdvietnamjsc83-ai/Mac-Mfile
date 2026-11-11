@@ -31,7 +31,7 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
         table.rowHeight = 28
         table.intercellSpacing = NSSize(width: 0, height: 0)
         table.style = .sourceList
-        table.backgroundColor = .white
+        table.backgroundColor = Theme.background
         table.dataSource = self
         table.delegate = self
         table.focusRingType = .none
@@ -42,7 +42,7 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
         scroll.documentView = table
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = true
-        scroll.backgroundColor = .white
+        scroll.backgroundColor = Theme.background
         scroll.translatesAutoresizingMaskIntoConstraints = false
         reload()
         NotificationCenter.default.addObserver(self, selector: #selector(reload), name: L10n.didChangeNotification, object: nil)
@@ -129,7 +129,7 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let e = entries[row]
         if e.separator {
-            let v = ColorView(.white)
+            let v = ColorView(Theme.background)
             let line = ColorView(Theme.border)
             v.addSubview(line)
             NSLayoutConstraint.activate([
