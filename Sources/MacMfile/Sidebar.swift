@@ -47,6 +47,7 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
         reload()
         NotificationCenter.default.addObserver(self, selector: #selector(reload), name: L10n.didChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(reload), name: Pins.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(reload), name: Settings.didChange, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(reload), name: NSWorkspace.didMountNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(reload), name: NSWorkspace.didUnmountNotification, object: nil)
     }
@@ -89,7 +90,7 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
         var e: [Entry] = [
             Entry(title: L10n.t("home"), path: SpecialLocation.home, symbol: "house"),
         ]
-        for (t, p) in Self.cloudFolders() { e.append(Entry(title: t, path: p, symbol: "cloud.fill", tint: blue)) }
+        for (t, p) in (Settings.showCloudInSidebar ? Self.cloudFolders() : []) { e.append(Entry(title: t, path: p, symbol: "cloud.fill", tint: blue)) }
         e.append(.sep)
         let known: [String: String] = ["Desktop": "desktop", "Downloads": "downloads", "Documents": "documents", "Pictures": "pictures", "Music": "music", "Movies": "videos"]
         for (i, p) in Pins.all.enumerated() {
@@ -100,7 +101,7 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
         }
         e.append(.sep)
         e.append(Entry(title: L10n.t("thisMac"), path: SpecialLocation.thisMac, symbol: "desktopcomputer", tint: blue))
-        for (t, p) in Self.volumes() { e.append(Entry(title: t, path: p, symbol: "externaldrive", tint: Theme.secondaryText)) }
+        for (t, p) in (Settings.showVolumesInSidebar ? Self.volumes() : []) { e.append(Entry(title: t, path: p, symbol: "externaldrive", tint: Theme.secondaryText)) }
         e.append(Entry(title: L10n.t("trash"), path: home + "/.Trash", symbol: "trash", tint: Theme.secondaryText))
         entries = e
         suppressSelect = true

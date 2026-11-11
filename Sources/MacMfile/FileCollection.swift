@@ -92,7 +92,7 @@ final class FileCellItem: NSCollectionViewItem {
     func configure(_ it: FileItem, mode: ViewMode) {
         self.mode = mode
         icon.image = NSWorkspace.shared.icon(forFile: it.path)
-        name.stringValue = it.name
+        name.stringValue = Settings.displayName(it)
         name.toolTip = it.name
         let size = it.isDirectory ? "" : Formatting.size(it.size)
         let date = Formatting.date(it.modified)

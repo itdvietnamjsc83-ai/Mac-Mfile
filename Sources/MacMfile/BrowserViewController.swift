@@ -94,6 +94,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         sidebar.onOpenNewWindow = { p in (NSApp.delegate as? AppDelegate)?.openWindow(at: p) }
         sidebar.onOpenNewTab = { [weak self] p in (self?.view.window?.windowController as? MainWindowController)?.addTab(path: p) }
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: L10n.didChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(settingsChanged), name: Settings.didChange, object: nil)
         reloadTexts()
         setViewMode(viewPrefs.mode(for: currentPath), remember: false)
         if let k = UserDefaults.standard.string(forKey: "MacMfile.sidePane").flatMap(SidePaneKind.init(rawValue:)), k != .none {
@@ -464,6 +465,15 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     @objc func toggleLanguage(_ sender: Any?) { L10n.current = L10n.current.toggled }
 
     /// Nút ☀/☾: đổi nhanh giao diện Sáng/Tối (Cmd+Shift+L).
+    /// Tùy chọn vừa đổi: đọc lại mục ẩn, mật độ, chế độ xem theo thư mục, tiêu đề.
+    @objc private func settingsChanged() {
+        showHidden = UserDefaults.standard.bool(forKey: "MacMfile.showHidden")
+        compact = UserDefaults.standard.bool(forKey: "MacMfile.compact")
+        let sel = selectedItems.map(\.path)
+        setViewMode(viewPrefs.mode(for: currentPath), remember: false)
+        load(selecting: sel)
+    }
+
     @objc func toggleTheme(_ sender: Any?) { Theme.toggleAppearance() }
 
     @objc private func appearanceChanged() {
@@ -553,7 +563,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         backB.isEnabled = history.canGoBack
         fwdB.isEnabled = history.canGoForward
         upB.isEnabled = NavigationHistory.parent(of: currentPath) != nil
-        self.title = title
+        self.title = Settings.fullPathInTitle && !isSpecialPage ? currentPath : title
         onLocationChange?(title, currentPath)
     }
 
@@ -685,7 +695,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         let t: NSTextField
         switch id {
         case "name":
-            t = label(it.name)
+            t = label(Settings.displayName(it))
             let icon = NSImageView(image: NSWorkspace.shared.icon(forFile: it.path))
             icon.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(icon)
@@ -942,7 +952,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     @objc func openSelected(_ sender: Any?) {
         let sel = targetItems
-        if sel.count == 1, sel[0].isDirectory { navigate(to: sel[0].path); return }
+        if sel.count == 1, sel[0].isDirectory, !Settings.openFoldersInNewWindow { navigate(to: sel[0].path); return }
         for it in sel {
             if it.isDirectory { (NSApp.delegate as? AppDelegate)?.openWindow(at: it.path) }
             else { NSWorkspace.shared.open(URL(fileURLWithPath: it.path)) }
@@ -976,7 +986,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         let paths = targetItems.isEmpty ? (isSpecialPage ? [] : [currentPath]) : targetItems.map(\.path)
         guard !paths.isEmpty else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(PathParser.copyText(for: paths), forType: .string)
+        NSPasteboard.general.setString(PathParser.copyText(for: paths, quoted: Settings.quotePaths), forType: .string)
         showMessage(L10n.f("copiedPaths", paths.count))
     }
 

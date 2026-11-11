@@ -36,7 +36,7 @@ final class SpecialPageController: NSObject {
         scroll.isHidden = true
         scroll.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(relayout), name: NSView.frameDidChangeNotification, object: scroll)
-        for n in [Pins.didChange, Favorites.didChange, L10n.didChangeNotification] {
+        for n in [Pins.didChange, Favorites.didChange, L10n.didChangeNotification, Settings.didChange] {
             NotificationCenter.default.addObserver(self, selector: #selector(rebuild), name: n, object: nil)
         }
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(rebuild), name: NSWorkspace.didMountNotification, object: nil)
@@ -103,14 +103,19 @@ final class SpecialPageController: NSObject {
             return t
         }, size: NSSize(width: 236, height: 60))
 
-        let favs = Favorites.all.filter { FileManager.default.fileExists(atPath: $0) }
-        header("favorites")
-        if favs.isEmpty { empty("noFavorites") }
-        else { blocks.append(.rows(favs.map { makeRow($0, date: nil) })) }
-
-        header("recent")
-        if recentPaths.isEmpty { empty("noRecent") }
-        else { blocks.append(.rows(recentPaths.prefix(25).map { makeRow($0.0, date: $0.1) })) }
+        if Settings.showFavorites {
+            let favs = Favorites.all.filter { FileManager.default.fileExists(atPath: $0) }
+            header("favorites")
+            if favs.isEmpty { empty("noFavorites") }
+            else { blocks.append(.rows(favs.map { makeRow($0, date: nil) })) }
+        }
+        if Settings.showRecent {
+            let cleared = Settings.recentClearedAt ?? .distantPast
+            let recent = recentPaths.filter { $0.1 > cleared }
+            header("recent")
+            if recent.isEmpty { empty("noRecent") }
+            else { blocks.append(.rows(recent.prefix(25).map { makeRow($0.0, date: $0.1) })) }
+        }
     }
 
     private func makeRow(_ p: String, date: Date?) -> RecentRow {
