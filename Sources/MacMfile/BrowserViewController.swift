@@ -613,7 +613,6 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             add("open", #selector(openSelected(_:)), "Enter", to: m)
             if let f = single, f.isDirectory {
                 add("openNewWindow", #selector(openInNewWindow(_:)), to: m)
-                add("openInTerminal", #selector(openInTerminal(_:)), to: m)
             }
             if let f = single, !f.isDirectory {
                 add("editInTextEdit", #selector(editInTextEdit(_:)), to: m)
@@ -622,7 +621,14 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
                 add("extractAll", #selector(extractAll(_:)), to: m)
                 add("extractHere", #selector(extractHere(_:)), to: m)
             }
-            add("addFavorites", #selector(pinSelected(_:)), to: m)
+            if let f = single, Pins.all.contains(f.path) {
+                add("unpinQuick", #selector(unpinSelected(_:)), to: m)
+            } else {
+                add(single?.isDirectory == true ? "pinQuick" : "addFavorites", #selector(pinSelected(_:)), "Cmd+Shift+P", to: m)
+            }
+            if let f = single, f.isDirectory {
+                add("openInTerminal", #selector(openInTerminal(_:)), to: m)
+            }
             m.addItem(.separator())
             add("copyPath", #selector(copyPath(_:)), "Cmd+Shift+C", to: m)
             add("share", #selector(shareSelected(_:)), to: m)
