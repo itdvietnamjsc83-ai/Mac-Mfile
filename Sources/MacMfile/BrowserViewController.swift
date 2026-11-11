@@ -29,6 +29,9 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     private var compact = UserDefaults.standard.bool(forKey: "MacMfile.compact")
     private var detailsToggle: FlatButton!, iconsToggle: FlatButton!
     private let sidebar = SidebarController()
+    private let sidePane = SidePaneController()
+    private var body: NSSplitView!
+    private var paneButton: FlatButton!
     private let address = AddressField()
     private let search = NSSearchField()
     private let status = label("")
@@ -58,6 +61,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         body.translatesAutoresizingMaskIntoConstraints = false
         body.addArrangedSubview(sidebar.scroll)
         body.addArrangedSubview(buildTable())
+        body.addArrangedSubview(sidePane.view)
+        self.body = body
         sidebar.scroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
         let statusBar = buildStatusBar()
 
@@ -89,6 +94,9 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: L10n.didChangeNotification, object: nil)
         reloadTexts()
         setViewMode(viewPrefs.mode(for: currentPath), remember: false)
+        if let k = UserDefaults.standard.string(forKey: "MacMfile.sidePane").flatMap(SidePaneKind.init(rawValue:)), k != .none {
+            DispatchQueue.main.async { self.showPane(k) }
+        }
         load()
     }
 
@@ -163,10 +171,15 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(stack)
+        // Nút "Chi tiết" ở góc phải thanh lệnh như Windows 11: bật/tắt ngăn chi tiết.
+        paneButton = b("details", "sidebar.right", #selector(toggleDetailsPane(_:)))
+        bar.addSubview(paneButton)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 10),
             stack.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: bar.trailingAnchor, constant: -10),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: paneButton.leadingAnchor, constant: -10),
+            paneButton.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -10),
+            paneButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
         ])
         return bar
     }
@@ -243,6 +256,24 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         container.pin(cs, insets: .init())
         return container
     }
+
+    // MARK: Ngăn chi tiết / xem trước (FR-07)
+
+    var paneKind: SidePaneKind { sidePane.kind }
+
+    func showPane(_ k: SidePaneKind) {
+        let newKind = sidePane.kind == k ? SidePaneKind.none : k
+        sidePane.show(newKind)
+        UserDefaults.standard.set(newKind.rawValue, forKey: "MacMfile.sidePane")
+        paneButton.isActive = newKind == .details
+        sidePane.update(selection: selectedItems, folder: currentPath)
+        body.layoutSubtreeIfNeeded()
+        let w = body.bounds.width
+        body.setPosition(newKind == .none ? w : max(400, w - 300), ofDividerAt: 1)
+    }
+
+    @objc func toggleDetailsPane(_ sender: Any?) { showPane(.details) }
+    @objc func togglePreviewPane(_ sender: Any?) { showPane(.preview) }
 
     // MARK: Chế độ xem (FR-06, FR-21)
 
@@ -368,6 +399,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     private func selectionChanged() {
         updateStatus()
+        sidePane.update(selection: selectedItems, folder: currentPath)
         if QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible { QLPreviewPanel.shared().reloadData() }
     }
 
@@ -451,6 +483,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         updateLocationUI()
         sidebar.select(path: currentPath)
         updateStatus()
+        sidePane.update(selection: selectedItems, folder: currentPath)
     }
 
     private func applySortAndFilter() {
@@ -1306,6 +1339,17 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         c.target = self
         c.state = compact ? .on : .off
         m.addItem(c)
+        let paneItem = NSMenuItem(title: L10n.t("pane"), action: nil, keyEquivalent: "")
+        let pm = NSMenu()
+        for (key, sel, k, sc) in [("detailsPane", #selector(toggleDetailsPane(_:)), SidePaneKind.details, "Option+Shift+P"),
+                                  ("previewPane", #selector(togglePreviewPane(_:)), SidePaneKind.preview, "Option+P")] {
+            let it = NSMenuItem(title: L10n.t(key) + "\t" + sc, action: sel, keyEquivalent: "")
+            it.target = self
+            it.state = sidePane.kind == k ? .on : .off
+            pm.addItem(it)
+        }
+        paneItem.submenu = pm
+        m.addItem(paneItem)
         let showItem = NSMenuItem(title: L10n.t("show"), action: nil, keyEquivalent: "")
         let sm = NSMenu()
         let hidden = NSMenuItem(title: L10n.t("hiddenItems"), action: #selector(toggleHidden(_:)), keyEquivalent: "")

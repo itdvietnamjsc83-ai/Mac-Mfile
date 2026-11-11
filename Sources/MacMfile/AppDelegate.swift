@@ -211,6 +211,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewItems += [
             item("compactView", #selector(BrowserViewController.toggleCompact(_:)), ""),
             item("hiddenItems", #selector(BrowserViewController.toggleHidden(_:)), ".", [.command, .shift]),
+            item("previewPane", #selector(BrowserViewController.togglePreviewPane(_:)), "p", [.option]),
+            item("detailsPane", #selector(BrowserViewController.toggleDetailsPane(_:)), "p", [.option, .shift]),
             .separator(),
             item("refresh", #selector(BrowserViewController.refresh(_:)), "r"),
             item("refresh", #selector(BrowserViewController.refresh(_:)), f5, []),
@@ -270,6 +272,10 @@ final class ViewMenuStates: NSObject, NSMenuDelegate {
                 it.state = browser?.viewMode == ViewMode.allCases[it.tag] ? .on : .off
             } else if it.action == #selector(BrowserViewController.toggleCompact(_:)) {
                 it.state = browser?.isCompact == true ? .on : .off
+            } else if it.action == #selector(BrowserViewController.togglePreviewPane(_:)) {
+                it.state = browser?.paneKind == .preview ? .on : .off
+            } else if it.action == #selector(BrowserViewController.toggleDetailsPane(_:)) {
+                it.state = browser?.paneKind == .details ? .on : .off
             } else if it.action == #selector(BrowserViewController.toggleHidden(_:)) {
                 it.state = browser?.isShowingHidden == true ? .on : .off
             }
