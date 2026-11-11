@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// Màu, phông, kích thước đo theo Windows 11 File Explorer (Mục 2.3, bản mẫu đã duyệt).
 enum Theme {
@@ -42,12 +43,14 @@ enum Theme {
 
     static let rowHeight: CGFloat = 32
 
-    /// Segoe UI nếu máy đã có, nếu không thì Selawik, cuối cùng là phông hệ thống.
+    /// Phông giao diện như Windows 11: Segoe UI nếu máy đã cài; nếu không thì Open Sans đóng kèm
+    /// (cùng tác giả Steve Matteson, dáng chữ gần Segoe, đủ dấu tiếng Việt, giấy phép OFL); cuối cùng là phông hệ thống.
     static func font(_ size: CGFloat = 12, weight: NSFont.Weight = .regular) -> NSFont {
-        let names = weight == .regular ? ["Segoe UI", "Selawik"] : ["Segoe UI Semibold", "Selawik Semibold"]
-        for n in names {
-            if let f = NSFont(name: n, size: size) { return f }
-        }
+        FluentIcons.register()
+        let semibold = weight != .regular
+        if let f = NSFont(name: semibold ? "Segoe UI Semibold" : "Segoe UI", size: size) { return f }
+        // Open Sans có chiều cao chữ thường lớn hơn Segoe; thu nhỏ 5% để cột chữ cân như bản Windows.
+        if let f = NSFont(name: semibold ? "OpenSansRoman-SemiBold" : "OpenSansRoman-Regular", size: (size * 0.95).rounded(.toNearestOrEven)) { return f }
         return NSFont.systemFont(ofSize: size, weight: weight)
     }
 
@@ -276,5 +279,53 @@ enum FluentIcons {
         img.accessibilityDescription = name
         cache[key] = img
         return img
+    }
+}
+
+/// Biểu tượng thư mục và tệp kiểu Windows 11, lấy từ bộ Fluent Emoji của Microsoft (MIT) đóng kèm trong Resources/Icons.
+/// Ứng dụng (.app) và ổ đĩa vẫn dùng biểu tượng của macOS.
+enum FileIcons {
+    private static var cache: [String: NSImage] = [:]
+
+    static func named(_ name: String) -> NSImage? {
+        if let c = cache[name] { return c }
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("Icons/\(name).pdf"),
+              let img = NSImage(contentsOf: url) else { return nil }
+        cache[name] = img
+        return img
+    }
+
+    static func kind(of path: String) -> String? {
+        let url = URL(fileURLWithPath: path)
+        let ext = url.pathExtension.lowercased()
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else { return "page_facing_up" }
+        if isDir.boolValue {
+            if ["app", "bundle", "framework", "photoslibrary", "rtfd", "pages", "numbers", "key"].contains(ext) { return nil }
+            if let v = try? url.resourceValues(forKeys: [.isVolumeKey]), v.isVolume == true { return nil }
+            return "file_folder"
+        }
+        guard let t = UTType(filenameExtension: ext) else { return "page_facing_up" }
+        if t.conforms(to: .image) { return "framed_picture" }
+        if t.conforms(to: .audio) { return "musical_note" }
+        if t.conforms(to: .movie) || t.conforms(to: .video) { return "film_frames" }
+        if t.conforms(to: .archive) || ["zip", "rar", "7z", "gz", "tgz", "bz2", "xz", "tar", "dmg"].contains(ext) { return "package" }
+        // Tệp có biểu tượng riêng của ứng dụng (Word, Excel, PDF…) giữ biểu tượng hệ thống như Windows.
+        if t.conforms(to: .plainText) || t.conforms(to: .sourceCode) || ["log", "md", "csv", "json", "xml", "ini", "cfg"].contains(ext) { return "page_facing_up" }
+        return nil
+    }
+
+    /// Bản nhỏ có màu cho ngăn điều hướng, thanh địa chỉ (thay glyph đơn sắc như Windows 11).
+    static func small(_ symbol: String, size: CGFloat) -> NSImage? {
+        let map = ["folder.fill": "file_folder", "folder": "file_folder", "desktopcomputer": "desktop_computer"]
+        guard let n = map[symbol], let img = named(n)?.copy() as? NSImage else { return nil }
+        img.size = NSSize(width: size, height: size)
+        return img
+    }
+
+    /// Biểu tượng cho một đường dẫn: kiểu Windows nếu có, không thì của macOS.
+    static func icon(for path: String) -> NSImage {
+        if let k = kind(of: path), let img = named(k) { return img }
+        return NSWorkspace.shared.icon(forFile: path)
     }
 }

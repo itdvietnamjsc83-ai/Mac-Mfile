@@ -243,7 +243,7 @@ final class FileOperation {
             let (s1, d1) = info(src), (s2, d2) = info(existing)
             a.informativeText = (folders ? L10n.f("conflictFolderInfo", name) : L10n.f("conflictInfo", name))
                 + "\n\n" + L10n.f("fromFile", s1, d1) + "\n" + L10n.f("toFile", s2, d2)
-            a.icon = NSWorkspace.shared.icon(forFile: src)
+            a.icon = FileIcons.icon(for: src)
             a.addButton(withTitle: L10n.t(folders ? "mergeFolder" : "replaceFile"))
             a.addButton(withTitle: L10n.t("skipFile"))
             a.addButton(withTitle: L10n.t("keepBoth"))
