@@ -126,12 +126,12 @@ func label(_ text: String, size: CGFloat = 12, color: NSColor = Theme.text) -> N
 /// Hàng biểu tượng trên cùng của menu chuột phải Windows 11 (Cắt, Sao chép, Đổi tên, Chia sẻ, Xóa).
 final class ContextIconRow: NSView {
     private weak var owner: NSObject?
-    private weak var menu: NSMenu?
+    private weak var parentMenu: NSMenu?
     private var actions: [Selector] = []
 
     init(owner: NSObject, menu: NSMenu, buttons: [(String, String, Selector)]) {
         self.owner = owner
-        self.menu = menu
+        self.parentMenu = menu
         super.init(frame: NSRect(x: 0, y: 0, width: 12 + buttons.count * 58, height: 52))
         for (i, b) in buttons.enumerated() {
             // Nhãn dưới biểu tượng như Windows 11: "Cắt", "Sao chép"… (bỏ phần phím trong ngoặc)
@@ -152,7 +152,7 @@ final class ContextIconRow: NSView {
 
     @objc private func press(_ sender: NSButton) {
         let sel = actions[sender.tag]
-        menu?.cancelTracking()
+        parentMenu?.cancelTracking()
         let target = owner
         DispatchQueue.main.async { _ = target?.perform(sel, with: nil) }
     }
