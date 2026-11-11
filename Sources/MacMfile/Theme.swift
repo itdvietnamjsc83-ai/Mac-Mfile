@@ -122,3 +122,38 @@ func label(_ text: String, size: CGFloat = 12, color: NSColor = Theme.text) -> N
     l.translatesAutoresizingMaskIntoConstraints = false
     return l
 }
+
+/// Hàng biểu tượng trên cùng của menu chuột phải Windows 11 (Cắt, Sao chép, Đổi tên, Chia sẻ, Xóa).
+final class ContextIconRow: NSView {
+    private weak var owner: NSObject?
+    private weak var menu: NSMenu?
+    private var actions: [Selector] = []
+
+    init(owner: NSObject, menu: NSMenu, buttons: [(String, String, Selector)]) {
+        self.owner = owner
+        self.menu = menu
+        super.init(frame: NSRect(x: 0, y: 0, width: 12 + buttons.count * 58, height: 52))
+        for (i, b) in buttons.enumerated() {
+            // Nhãn dưới biểu tượng như Windows 11: "Cắt", "Sao chép"… (bỏ phần phím trong ngoặc)
+            let caption = b.1.components(separatedBy: " (").first ?? b.1
+            let btn = FlatButton(title: caption, symbol: b.0, target: self, action: #selector(press(_:)))
+            btn.imagePosition = .imageAbove
+            btn.font = Theme.font(11)
+            btn.toolTip = b.1
+            btn.tag = i
+            btn.translatesAutoresizingMaskIntoConstraints = true
+            for c in btn.constraints where c.firstAttribute == .height { btn.removeConstraint(c) }
+            btn.frame = NSRect(x: 6 + i * 58, y: 2, width: 56, height: 48)
+            addSubview(btn)
+            actions.append(b.2)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func press(_ sender: NSButton) {
+        let sel = actions[sender.tag]
+        menu?.cancelTracking()
+        let target = owner
+        DispatchQueue.main.async { _ = target?.perform(sel, with: nil) }
+    }
+}

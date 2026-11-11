@@ -1,5 +1,6 @@
 import AppKit
 import Quartz
+import UniformTypeIdentifiers
 import MfileCore
 
 /// Một tab duyệt thư mục: nút điều hướng, thanh địa chỉ, ô tìm kiếm, thanh lệnh, ngăn điều hướng,
@@ -480,47 +481,177 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let row = table.clickedRow
-        func add(_ key: String, _ sel: Selector, _ shortcut: String = "") {
-            let it = NSMenuItem(title: L10n.t(key) + (shortcut.isEmpty ? "" : "\t" + shortcut), action: sel, keyEquivalent: "")
+        // Windows chọn luôn mục vừa nhấp chuột phải nếu nó chưa nằm trong vùng chọn.
+        if row >= 0 && !table.selectedRowIndexes.contains(row) {
+            table.selectRowIndexes([row], byExtendingSelection: false)
+        }
+        @discardableResult
+        func add(_ key: String, _ sel: Selector?, _ shortcut: String = "", to m: NSMenu? = nil, title: String? = nil) -> NSMenuItem {
+            let it = NSMenuItem(title: (title ?? L10n.t(key)) + (shortcut.isEmpty ? "" : "\t" + shortcut), action: sel, keyEquivalent: "")
             it.target = self
+            (m ?? menu).addItem(it)
+            return it
+        }
+        func sub(_ key: String, _ items: (NSMenu) -> Void) {
+            let m = NSMenu()
+            items(m)
+            let it = NSMenuItem(title: L10n.t(key), action: nil, keyEquivalent: "")
+            it.submenu = m
             menu.addItem(it)
         }
+
         if row < 0 {
-            // Vùng trống
+            // Vùng trống (Mục 5.3): Xem, Sắp xếp theo, Làm mới, Dán, Mới, Thuộc tính, Mở trong Terminal
+            sub("view") { m in
+                let d = add("details", nil, to: m)
+                d.state = .on
+                add("hiddenItems", #selector(toggleHidden(_:)), to: m).state = showHidden ? .on : .off
+            }
+            sub("sortBy") { m in
+                for (k, key) in [(SortKey.name, "colName"), (.modified, "colModified"), (.type, "colType"), (.size, "colSize")] {
+                    let it = add(key, #selector(sortBy(_:)), to: m)
+                    it.representedObject = k.rawValue
+                    it.state = sortKey == k ? .on : .off
+                }
+            }
             add("refresh", #selector(refresh(_:)), "F5")
-            add("paste", #selector(paste(_:)), "Cmd+V")
-            add("newFolderName", #selector(newFolder(_:)), "Cmd+Shift+N")
             menu.addItem(.separator())
+            add("paste", #selector(paste(_:)), "Cmd+V")
+            sub("new") { m in
+                add("newFolder", #selector(newFolder(_:)), "Cmd+Shift+N", to: m)
+                add("newTextFile", #selector(newTextFile(_:)), to: m)
+            }
+            menu.addItem(.separator())
+            add("openInTerminal", #selector(openInTerminal(_:)))
             add("copyAddress", #selector(copyAddress(_:)))
+            add("properties", #selector(showInfo(_:)), "Option+Enter")
             return
         }
-        let target = targetItems
-        add("open", #selector(openSelected(_:)), "Enter")
-        if target.count == 1, target[0].isDirectory {
+
+        let target = selectedItems
+        let single = target.count == 1 ? target[0] : nil
+
+        // Hàng biểu tượng trên cùng giống Windows 11: Cắt, Sao chép, Đổi tên, Chia sẻ, Xóa
+        let iconRow = NSMenuItem()
+        iconRow.view = ContextIconRow(owner: self, menu: menu, buttons: [
+            ("scissors", L10n.t("cut") + " (Cmd+X)", #selector(cut(_:))),
+            ("doc.on.doc", L10n.t("copy") + " (Cmd+C)", #selector(copy(_:))),
+            ("character.cursor.ibeam", L10n.t("rename") + " (F2)", #selector(renameSelected(_:))),
+            ("square.and.arrow.up", L10n.t("share"), #selector(shareSelected(_:))),
+            ("trash", L10n.t("delete") + " (⌫)", #selector(trashSelected(_:))),
+        ])
+        menu.addItem(iconRow)
+        menu.addItem(.separator())
+
+        let open = add("open", #selector(openSelected(_:)), "Enter")
+        open.attributedTitle = NSAttributedString(string: open.title, attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
+
+        if let f = single, !f.isDirectory {
+            sub("openWith") { m in
+                let url = URL(fileURLWithPath: f.path)
+                let defaultApp = NSWorkspace.shared.urlForApplication(toOpen: url)
+                var apps = NSWorkspace.shared.urlsForApplications(toOpen: url)
+                if let d = defaultApp { apps.removeAll { $0 == d }; apps.insert(d, at: 0) }
+                for app in apps.prefix(12) {
+                    let name = FileManager.default.displayName(atPath: app.path).replacingOccurrences(of: ".app", with: "")
+                    let it = add("", #selector(openWithApp(_:)), to: m, title: name + (app == defaultApp ? " (" + L10n.t("defaultApp") + ")" : ""))
+                    it.representedObject = app
+                    let icon = NSWorkspace.shared.icon(forFile: app.path)
+                    icon.size = NSSize(width: 16, height: 16)
+                    it.image = icon
+                }
+                m.addItem(.separator())
+                add("chooseOtherApp", #selector(openWithOtherApp(_:)), to: m)
+            }
+        }
+        if let f = single, f.isDirectory {
             add("openNewWindow", #selector(openInNewWindow(_:)))
-            add("pinQuick", #selector(pinSelected(_:)), "Cmd+Shift+P")
         }
-        // Tệp nén: các lệnh giải nén giống Windows (Mục 5.3).
-        if target.count == 1, !target[0].isDirectory, ArchiveSupport.isArchive(target[0].name) {
-            menu.addItem(.separator())
-            add("extractAll", #selector(extractAll(_:)))
-            add("extractHere", #selector(extractHere(_:)))
-            let to = NSMenuItem(title: L10n.f("extractTo", ArchiveSupport.baseName(of: target[0].name)), action: #selector(extractToFolder(_:)), keyEquivalent: "")
-            to.target = self
-            menu.addItem(to)
-            add("testArchive", #selector(testArchive(_:)))
+        // Chia sẻ với ›: AirDrop, Mail, Tin nhắn… của macOS
+        sub("shareWith") { m in
+            let urls = target.map { URL(fileURLWithPath: $0.path) }
+            for svc in NSSharingService.sharingServices(forItems: urls) {
+                let it = add("", #selector(shareVia(_:)), to: m, title: svc.title)
+                it.image = svc.image
+                it.representedObject = svc
+            }
+        }
+        // Thêm vào Ưa thích / Ghim vào Truy nhập nhanh (tệp và thư mục đều ghim được)
+        if let f = single, Pins.all.contains(f.path) {
+            add("unpinQuick", #selector(unpinSelected(_:)))
         } else {
-            add("compressZip", #selector(compressToZip(_:)))
+            add(single?.isDirectory == true ? "pinQuick" : "addFavorites", #selector(pinSelected(_:)), "Cmd+Shift+P")
         }
-        menu.addItem(.separator())
-        add("cut", #selector(cut(_:)), "Cmd+X")
-        add("copy", #selector(copy(_:)), "Cmd+C")
-        add("rename", #selector(renameSelected(_:)), "F2")
-        add("share", #selector(shareSelected(_:)))
-        add("delete", #selector(trashSelected(_:)), "⌫")
-        menu.addItem(.separator())
+        // Nén thành ›
+        sub("compressTo") { m in
+            for (fmt, key) in [("zip", "fmtZip"), ("7z", "fmt7z"), ("tar", "fmtTar"), ("tar.gz", "fmtTarGz")] {
+                let it = add(key, #selector(compressAs(_:)), to: m)
+                it.representedObject = fmt
+            }
+        }
         add("copyPath", #selector(copyPath(_:)), "Cmd+Shift+C")
         add("properties", #selector(showInfo(_:)), "Option+Enter")
+        menu.addItem(.separator())
+
+        // Nhóm lệnh theo loại tệp (như "Edit in Notepad", WinRAR trên Windows)
+        if let f = single, !f.isDirectory, ["txt", "md", "csv", "log", "json", "xml", "ini", "html", "css", "js", "swift", "py"].contains(f.fileExtension.lowercased()) {
+            add("editInTextEdit", #selector(editInTextEdit(_:)))
+        }
+        if let f = single, !f.isDirectory, ArchiveSupport.isArchive(f.name) {
+            add("extractAll", #selector(extractAll(_:)))
+            add("extractHere", #selector(extractHere(_:)))
+            add("", #selector(extractToFolder(_:)), title: L10n.f("extractTo", ArchiveSupport.baseName(of: f.name)))
+            add("testArchive", #selector(testArchive(_:)))
+        }
+        if let f = single, f.isDirectory {
+            add("openInTerminal", #selector(openInTerminal(_:)))
+        }
+        if menu.items.last?.isSeparatorItem == false { menu.addItem(.separator()) }
+
+        // Hiện thêm tùy chọn: menu đầy đủ kiểu cũ của Windows (thứ tự như Windows 11 › Show more options).
+        sub("showMoreOptions") { m in
+            add("open", #selector(openSelected(_:)), "Enter", to: m)
+            if let f = single, f.isDirectory {
+                add("openNewWindow", #selector(openInNewWindow(_:)), to: m)
+                add("openInTerminal", #selector(openInTerminal(_:)), to: m)
+            }
+            if let f = single, !f.isDirectory {
+                add("editInTextEdit", #selector(editInTextEdit(_:)), to: m)
+            }
+            if let f = single, !f.isDirectory, ArchiveSupport.isArchive(f.name) {
+                add("extractAll", #selector(extractAll(_:)), to: m)
+                add("extractHere", #selector(extractHere(_:)), to: m)
+            }
+            add("addFavorites", #selector(pinSelected(_:)), to: m)
+            m.addItem(.separator())
+            add("copyPath", #selector(copyPath(_:)), "Cmd+Shift+C", to: m)
+            add("share", #selector(shareSelected(_:)), to: m)
+            add("showInFinder", #selector(showInFinder(_:)), to: m)
+            m.addItem(.separator())
+            let send = NSMenu()
+            add("sendToDesktop", #selector(sendToDesktop(_:)), to: send)
+            let zipIt = add("fmtZipFolder", #selector(compressAs(_:)), to: send)
+            zipIt.representedObject = "zip"
+            add("sendToDocuments", #selector(sendToFolder(_:)), to: send).representedObject = NSHomeDirectory() + "/Documents"
+            for (t, p) in SidebarController.volumes() {
+                let it = add("", #selector(sendToFolder(_:)), to: send, title: t)
+                it.representedObject = p
+            }
+            let sendItem = NSMenuItem(title: L10n.t("sendTo"), action: nil, keyEquivalent: "")
+            sendItem.submenu = send
+            m.addItem(sendItem)
+            m.addItem(.separator())
+            add("cut", #selector(cut(_:)), "Cmd+X", to: m)
+            add("copy", #selector(copy(_:)), "Cmd+C", to: m)
+            m.addItem(.separator())
+            add("createShortcut", #selector(createShortcut(_:)), to: m)
+            add("duplicate", #selector(duplicateSelected(_:)), "Cmd+D", to: m)
+            add("delete", #selector(trashSelected(_:)), "⌫", to: m)
+            add("deleteForever", #selector(deleteForever(_:)), "Shift+⌫", to: m)
+            add("rename", #selector(renameSelected(_:)), "F2", to: m)
+            m.addItem(.separator())
+            add("properties", #selector(showInfo(_:)), "Option+Enter", to: m)
+        }
     }
 
     // MARK: Lệnh tệp và thư mục
@@ -539,8 +670,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     @objc func pinSelected(_ sender: Any?) {
-        let dirs = targetItems.filter(\.isDirectory)
-        if dirs.isEmpty { Pins.pin(currentPath) } else { dirs.forEach { Pins.pin($0.path) } }
+        let sel = targetItems
+        if sel.isEmpty { Pins.pin(currentPath) } else { sel.forEach { Pins.pin($0.path) } }
     }
 
     @objc func openPin(_ sender: NSMenuItem) {
@@ -705,6 +836,102 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         }
     }
 
+    // MARK: Lệnh của menu chuột phải
+
+    @objc func unpinSelected(_ sender: Any?) {
+        selectedItems.forEach { Pins.unpin($0.path) }
+    }
+
+    @objc func openWithApp(_ sender: NSMenuItem) {
+        guard let app = sender.representedObject as? URL else { return }
+        let urls = selectedItems.map { URL(fileURLWithPath: $0.path) }
+        NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    @objc func openWithOtherApp(_ sender: Any?) {
+        let urls = selectedItems.map { URL(fileURLWithPath: $0.path) }
+        guard !urls.isEmpty, let window = view.window else { return }
+        let panel = NSOpenPanel()
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [.application]
+        panel.prompt = L10n.t("open")
+        panel.beginSheetModal(for: window) { resp in
+            guard resp == .OK, let app = panel.url else { return }
+            NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+        }
+    }
+
+    /// Mở Terminal tại thư mục (giống "Mở trong Terminal" của Windows 11).
+    @objc func openInTerminal(_ sender: Any?) {
+        let dir = selectedItems.first(where: \.isDirectory)?.path ?? currentPath
+        let terminal = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
+        NSWorkspace.shared.open([URL(fileURLWithPath: dir)], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    @objc func shareVia(_ sender: NSMenuItem) {
+        guard let svc = sender.representedObject as? NSSharingService else { return }
+        svc.perform(withItems: selectedItems.map { URL(fileURLWithPath: $0.path) })
+    }
+
+    @objc func editInTextEdit(_ sender: Any?) {
+        let app = URL(fileURLWithPath: "/System/Applications/TextEdit.app")
+        NSWorkspace.shared.open(selectedItems.map { URL(fileURLWithPath: $0.path) }, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    @objc func showInFinder(_ sender: Any?) {
+        NSWorkspace.shared.activateFileViewerSelecting(selectedItems.map { URL(fileURLWithPath: $0.path) })
+    }
+
+    /// Tạo lối tắt (alias của macOS) cạnh mục gốc: "Tên - Lối tắt".
+    @objc func createShortcut(_ sender: Any?) {
+        var made: [String] = []
+        for it in selectedItems {
+            let dir = (it.path as NSString).deletingLastPathComponent
+            if let p = makeAlias(of: it, in: dir) { made.append(p) }
+        }
+        load(selecting: made)
+    }
+
+    @discardableResult
+    private func makeAlias(of item: FileItem, in dir: String) -> String? {
+        let dest = uniquePath(in: dir, name: item.name + L10n.t("shortcutSuffix"))
+        do {
+            let data = try URL(fileURLWithPath: item.path).bookmarkData(options: .suitableForBookmarkFile, includingResourceValuesForKeys: nil, relativeTo: nil)
+            try URL.writeBookmarkData(data, to: URL(fileURLWithPath: dest))
+            return dest
+        } catch {
+            showError(error.localizedDescription)
+            return nil
+        }
+    }
+
+    /// Gửi tới › Màn hình nền (tạo lối tắt), giống Windows.
+    @objc func sendToDesktop(_ sender: Any?) {
+        let desktop = NSHomeDirectory() + "/Desktop"
+        for it in selectedItems { makeAlias(of: it, in: desktop) }
+        showMessage(L10n.t("sentToDesktop"))
+    }
+
+    /// Gửi tới › ổ đĩa: sao chép vào gốc ổ.
+    @objc func sendToFolder(_ sender: NSMenuItem) {
+        guard let dest = sender.representedObject as? String else { return }
+        transfer(selectedItems.map(\.path), to: dest, move: false)
+    }
+
+    @objc func duplicateSelected(_ sender: Any?) {
+        let sel = selectedItems
+        guard !sel.isEmpty else { NSSound.beep(); return }
+        transfer(sel.map(\.path), to: currentPath, move: false)
+    }
+
+    @objc func newTextFile(_ sender: Any?) {
+        let path = uniquePath(in: currentPath, name: L10n.t("newTextName"))
+        if FileManager.default.createFile(atPath: path, contents: Data()) {
+            load(selecting: [path])
+            renameSelected(nil)
+        }
+    }
+
     // MARK: Nén và giải nén (dùng bsdtar/zip có sẵn trong macOS)
 
     /// Chạy công cụ dòng lệnh ở nền, xong thì gọi lại trên luồng chính.
@@ -800,20 +1027,36 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         }
     }
 
-    /// Nén thành tệp ZIP: tên tệp theo mục đầu tiên, đặt cạnh các mục đã chọn (giống Windows).
-    @objc func compressToZip(_ sender: Any?) {
+    /// Nén thành tệp ZIP / 7z / TAR / TAR.GZ: tên tệp theo mục đầu tiên, đặt cạnh các mục đã chọn (giống Windows).
+    @objc func compressAs(_ sender: NSMenuItem) {
+        compress(format: sender.representedObject as? String ?? "zip")
+    }
+
+    @objc func compressToZip(_ sender: Any?) { compress(format: "zip") }
+
+    private func compress(format: String) {
         let sel = targetItems
         guard let first = sel.first else { NSSound.beep(); return }
         let dir = (first.path as NSString).deletingLastPathComponent
         let base = first.isDirectory ? first.name : (first.name as NSString).deletingPathExtension
-        let dest = uniquePath(in: dir, name: base + ".zip")
+        let dest = uniquePath(in: dir, name: base + "." + format)
+        let names = sel.map(\.name)
+        let tool: String
+        let args: [String]
+        switch format {
+        case "7z": tool = "/usr/bin/tar"; args = ["--format", "7zip", "-cf", dest] + names
+        case "tar": tool = "/usr/bin/tar"; args = ["-cf", dest] + names
+        case "tar.gz": tool = "/usr/bin/tar"; args = ["-czf", dest] + names
+        default: tool = "/usr/bin/zip"; args = ["-r", "-y", "-q", dest] + names
+        }
         showMessage(L10n.f("compressing", sel.count))
-        runTool("/usr/bin/zip", ["-r", "-y", "-q", dest] + sel.map(\.name), cwd: dir) { [weak self] ok, msg in
+        runTool(tool, args, cwd: dir) { [weak self] ok, msg in
             guard let self else { return }
             if ok {
                 self.showMessage(L10n.f("compressed", (dest as NSString).lastPathComponent))
                 self.load(selecting: [dest])
             } else {
+                try? FileManager.default.removeItem(atPath: dest)
                 self.showError(msg)
             }
         }
