@@ -91,7 +91,7 @@ final class FileCellItem: NSCollectionViewItem {
 
     func configure(_ it: FileItem, mode: ViewMode) {
         self.mode = mode
-        icon.image = NSWorkspace.shared.icon(forFile: it.path)
+        icon.image = FileIcons.icon(for: it.path)
         name.stringValue = Settings.displayName(it)
         name.toolTip = it.name
         let size = it.isDirectory ? "" : Formatting.size(it.size)

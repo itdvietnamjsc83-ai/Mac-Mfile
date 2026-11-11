@@ -18,9 +18,11 @@ cp "$BIN" "$APP/Contents/MacOS/MacMfile"
 sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD/" Resources/Info.plist > "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-# Phông: biểu tượng Fluent (MIT) đóng kèm. Muốn có Selawik (OFL) thì chép selawk*.ttf vào Resources/Fonts.
+# Phông và biểu tượng đóng kèm: Fluent System Icons, Fluent Emoji (MIT), Open Sans (OFL).
 mkdir -p "$APP/Contents/Resources/Fonts"
 cp Resources/Fonts/* "$APP/Contents/Resources/Fonts/"
+mkdir -p "$APP/Contents/Resources/Icons"
+cp Resources/Icons/* "$APP/Contents/Resources/Icons/"
 ls "$APP/Contents/Resources/Fonts"
 
 # Ký ad-hoc để macOS chạy được bản thử (chưa phải chữ ký Developer ID).

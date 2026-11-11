@@ -142,8 +142,9 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
             return v
         }
         let cell = NSTableCellView()
-        let icon = NSImageView(image: Theme.symbol(e.symbol, size: 13) ?? NSImage())
+        let icon = NSImageView(image: FileIcons.small(e.symbol, size: 16) ?? Theme.symbol(e.symbol, size: 13) ?? NSImage())
         icon.contentTintColor = e.tint
+        icon.imageScaling = .scaleProportionallyUpOrDown
         icon.translatesAutoresizingMaskIntoConstraints = false
         let t = label(e.title)
         let k = label(e.shortcut, size: 11, color: Theme.secondaryText)

@@ -124,7 +124,7 @@ final class PropertiesWindowController: NSWindowController, NSWindowDelegate, NS
         ])
         var views: [NSView] = []
 
-        let icon = NSImageView(image: paths.count == 1 ? NSWorkspace.shared.icon(forFile: paths[0]) : (NSWorkspace.shared.icon(forFiles: paths) ?? NSImage()))
+        let icon = NSImageView(image: paths.count == 1 ? FileIcons.icon(for: paths[0]) : (NSWorkspace.shared.icon(forFiles: paths) ?? NSImage()))
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.widthAnchor.constraint(equalToConstant: 32).isActive = true
         icon.heightAnchor.constraint(equalToConstant: 32).isActive = true

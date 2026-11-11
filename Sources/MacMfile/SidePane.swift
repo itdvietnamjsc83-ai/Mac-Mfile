@@ -110,7 +110,7 @@ final class SidePaneController {
         }
         let path = current.first?.path ?? folderPath
         let attrs = (try? fm.attributesOfItem(atPath: path)) ?? [:]
-        icon.image = NSWorkspace.shared.icon(forFile: path)
+        icon.image = FileIcons.icon(for: path)
         let item = current.first
         title.stringValue = item?.name ?? (folderPath as NSString).lastPathComponent
         subtitle.stringValue = item?.typeDescription() ?? L10n.t("typeFolder")
