@@ -462,7 +462,6 @@ public enum L10n {
         "goToFolder": ("Đi đến thư mục…", "Go to folder…"),
         "minimize": ("Thu nhỏ", "Minimize"),
         "maximize": ("Phóng to", "Maximize"),
-        "close": ("Đóng", "Close"),
         "snapLeft": ("Nửa trái", "Left half"),
         "snapRight": ("Nửa phải", "Right half"),
         "userGuide": ("Hướng dẫn sử dụng", "User guide"),
