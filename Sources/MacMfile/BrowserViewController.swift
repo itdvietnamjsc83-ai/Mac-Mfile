@@ -66,7 +66,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         body.addArrangedSubview(buildTable())
         body.addArrangedSubview(sidePane.view)
         self.body = body
-        sidebar.scroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
+        sidebar.scroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
         let statusBar = buildStatusBar()
 
         for v in [nav, cmd, body, statusBar] { root.addSubview(v) }
@@ -286,13 +286,25 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         return container
     }
 
-    /// Đặt bề rộng ngăn điều hướng (220) khi khung đã có kích thước thật; đặt trong loadView thì bị bỏ qua vì lúc đó bề rộng còn 0.
+    /// Bề rộng mặc định của ngăn điều hướng: khoảng 4 cm thật trên màn hình (Dũng, 11/11/2026).
+    /// Tính từ kích thước vật lý của màn hình; mỗi lần mở đều trở về mức này, người dùng kéo rộng khi cần.
+    static func defaultSidebarWidth(on screen: NSScreen?) -> CGFloat {
+        let fallback: CGFloat = 190
+        guard let screen = screen ?? NSScreen.main,
+              let num = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return fallback }
+        let mm = CGDisplayScreenSize(CGDirectDisplayID(num.uint32Value)).width
+        guard mm > 50 else { return fallback }
+        let pointsPerMM = screen.frame.width / mm
+        return min(max((40 * pointsPerMM).rounded(), 130), 260)
+    }
+
+    /// Đặt bề rộng ngăn điều hướng khi khung đã có kích thước thật; đặt trong loadView thì bị bỏ qua vì lúc đó bề rộng còn 0.
     private var didPlaceDividers = false
     override func viewDidLayout() {
         super.viewDidLayout()
         guard !didPlaceDividers, body.bounds.width > 500 else { return }
         didPlaceDividers = true
-        body.setPosition(220, ofDividerAt: 0)
+        body.setPosition(Self.defaultSidebarWidth(on: view.window?.screen), ofDividerAt: 0)
         let w = body.bounds.width
         body.setPosition(sidePane.kind == .none ? w : max(400, w - 300), ofDividerAt: 1)
     }
