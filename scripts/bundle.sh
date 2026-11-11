@@ -18,18 +18,9 @@ cp "$BIN" "$APP/Contents/MacOS/MacMfile"
 sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD/" Resources/Info.plist > "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-# Phông: biểu tượng Fluent (MIT) đóng kèm sẵn; Selawik (OFL, thay cho Segoe UI) tải lúc build nếu được, lỗi thì bỏ qua.
+# Phông: biểu tượng Fluent (MIT) đóng kèm. Muốn có Selawik (OFL) thì chép selawk*.ttf vào Resources/Fonts.
 mkdir -p "$APP/Contents/Resources/Fonts"
 cp Resources/Fonts/* "$APP/Contents/Resources/Fonts/"
-# Kho Selawik chỉ có mã nguồn; bản .ttf nằm ở mục Releases.
-SEL="$(mktemp -d)"
-ASSET="$(curl -fsSL https://api.github.com/repos/microsoft/Selawik/releases/latest 2>/dev/null \
-  | grep -oE '"browser_download_url": *"[^"]+\.zip"' | head -1 | sed -E 's/.*"(https[^"]+)"/\1/' || true)"
-echo "Selawik: ${ASSET:-không tìm thấy bản phát hành}"
-if [ -n "$ASSET" ] && curl -fsSL "$ASSET" -o "$SEL/s.zip" && unzip -q "$SEL/s.zip" -d "$SEL/s"; then
-  find "$SEL/s" -iname '*.ttf' -exec cp {} "$APP/Contents/Resources/Fonts/" \; || true
-  find "$SEL/s" -iname 'LICENSE*' -exec cp {} "$APP/Contents/Resources/Fonts/Selawik-LICENSE.txt" \; || true
-fi
 ls "$APP/Contents/Resources/Fonts"
 
 # Ký ad-hoc để macOS chạy được bản thử (chưa phải chữ ký Developer ID).
