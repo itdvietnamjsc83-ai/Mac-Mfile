@@ -7,12 +7,13 @@ final class FileTableView: NSTableView {
     var onDeleteForever: (() -> Void)?
     var onRename: (() -> Void)?
     var onQuickLook: (() -> Void)?
+    var onProperties: (() -> Void)?
 
     override func keyDown(with event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         switch event.keyCode {
-        case 36, 76: // Return, Enter: mở
-            onOpen?()
+        case 36, 76: // Return, Enter: mở; Option+Enter: Thuộc tính (Alt+Enter của Windows)
+            if flags.contains(.option) { onProperties?() } else { onOpen?() }
         case 51, 117: // delete (⌫), forward delete
             if flags.contains(.shift) || flags == [.command, .option] { onDeleteForever?() }
             else if flags.isEmpty || flags == .command || flags == .function { onTrash?() }

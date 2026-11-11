@@ -9,13 +9,14 @@ final class FileCollectionView: NSCollectionView {
     var onDeleteForever: (() -> Void)?
     var onRename: (() -> Void)?
     var onQuickLook: (() -> Void)?
+    var onProperties: (() -> Void)?
     /// Chỉ số mục vừa nhấp chuột phải (-1 nếu nhấp vào chỗ trống).
     private(set) var clickedIndex = -1
 
     override func keyDown(with event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         switch event.keyCode {
-        case 36, 76: onOpen?()
+        case 36, 76: if flags.contains(.option) { onProperties?() } else { onOpen?() }
         case 51, 117:
             if flags.contains(.shift) || flags == [.command, .option] { onDeleteForever?() }
             else if flags.isEmpty || flags == .command || flags == .function { onTrash?() }

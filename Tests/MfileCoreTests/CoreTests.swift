@@ -196,3 +196,40 @@ final class ViewModeTests: XCTestCase {
         XCTAssertEqual(ViewMode.details.itemSize(compact: true).height, 24)
     }
 }
+
+#if canImport(ImageIO)
+import ImageIO
+import UniformTypeIdentifiers
+
+final class MetadataCleanerTests: XCTestCase {
+    func testRemovesGPSAndExif() throws {
+        let dir = NSTemporaryDirectory() + "mfile-meta-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let src = dir + "/anh.jpg"
+        let ctx = CGContext(data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        ctx.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        let img = ctx.makeImage()!
+        let d = CGImageDestinationCreateWithURL(URL(fileURLWithPath: src) as CFURL, UTType.jpeg.identifier as CFString, 1, nil)!
+        let props: [String: Any] = [
+            kCGImagePropertyGPSDictionary as String: [kCGImagePropertyGPSLatitude as String: 21.03, kCGImagePropertyGPSLatitudeRef as String: "N"],
+            kCGImagePropertyTIFFDictionary as String: [kCGImagePropertyTIFFMake as String: "MayAnh", kCGImagePropertyTIFFArtist as String: "Dung"],
+        ]
+        CGImageDestinationAddImage(d, img, props as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(d))
+        XCTAssertTrue(MetadataCleaner.imageMetadataGroups(src).contains(kCGImagePropertyGPSDictionary as String))
+
+        let copy = dir + "/" + MetadataCleaner.copyName(for: src, lang: .vi)
+        XCTAssertTrue(copy.hasSuffix("anh - Bản sao.jpg"))
+        try MetadataCleaner.clean(src, to: copy)
+        XCTAssertFalse(MetadataCleaner.imageMetadataGroups(copy).contains(kCGImagePropertyGPSDictionary as String))
+
+        try MetadataCleaner.cleanInPlace(src)
+        let left = MetadataCleaner.imageMetadataGroups(src)
+        XCTAssertFalse(left.contains(kCGImagePropertyGPSDictionary as String))
+        XCTAssertTrue(MetadataCleaner.canClean("/x/a.PDF"))
+        XCTAssertFalse(MetadataCleaner.canClean("/x/a.txt"))
+    }
+}
+#endif

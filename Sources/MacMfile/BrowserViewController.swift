@@ -215,6 +215,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         table.onDeleteForever = { [weak self] in self?.deleteForever(nil) }
         table.onRename = { [weak self] in self?.renameSelected(nil) }
         table.onQuickLook = { [weak self] in self?.quickLook(nil) }
+        table.onProperties = { [weak self] in self?.showInfo(nil) }
 
         let scroll = NSScrollView()
         scroll.documentView = table
@@ -242,6 +243,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         collection.onDeleteForever = { [weak self] in self?.deleteForever(nil) }
         collection.onRename = { [weak self] in self?.renameSelected(nil) }
         collection.onQuickLook = { [weak self] in self?.quickLook(nil) }
+        collection.onProperties = { [weak self] in self?.showInfo(nil) }
         let cs = NSScrollView()
         cs.documentView = collection
         cs.hasVerticalScroller = true
@@ -1338,9 +1340,9 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     @objc func showInfo(_ sender: Any?) {
-        // Hộp thoại Thuộc tính kiểu Windows (Mục 5.11) làm ở bước sau; tạm mở bảng Thông tin của macOS.
-        let urls = targetItems.map { URL(fileURLWithPath: $0.path) }
-        NSWorkspace.shared.activateFileViewerSelecting(urls)
+        let sel = targetItems.map(\.path)
+        let paths = sel.isEmpty ? (isSpecialPage ? [] : [currentPath]) : sel
+        PropertiesWindowController.show(paths: paths) { [weak self] in self?.refresh(nil) }
     }
 
     @objc func selectAllItems(_ sender: Any?) { selectIndexes(IndexSet(items.indices)) }

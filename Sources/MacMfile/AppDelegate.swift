@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: Pins.didChange, object: nil)
         restoreSession()
         installViewModeKeys()
+        AutoCleanWatcher.shared.restart()
         NSApp.activate(ignoringOtherApps: true)
         if !UserDefaults.standard.bool(forKey: firstRunKey) {
             UserDefaults.standard.set(true, forKey: firstRunKey)
