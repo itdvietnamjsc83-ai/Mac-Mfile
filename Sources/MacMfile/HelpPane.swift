@@ -51,6 +51,8 @@ final class HelpPaneView: ColorView, NSSearchFieldDelegate {
         stack.alignment = .leading
         stack.spacing = 8
         pin(stack, insets: .init(top: 12, left: 12, bottom: 10, right: 12))
+        // Ngăn hẹp (tới khoảng 2 cm): nội dung cắt bớt hoặc xuống dòng, không đẩy ngăn rộng ra.
+        for st in [stack, foot, inner, list, common] { st.setClippingResistancePriority(NSLayoutConstraint.Priority(200), for: .horizontal) }
         NSLayoutConstraint.activate([
             head.widthAnchor.constraint(equalTo: stack.widthAnchor),
             search.widthAnchor.constraint(equalTo: stack.widthAnchor),

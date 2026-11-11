@@ -29,8 +29,12 @@ final class SidePaneController {
         rows.spacing = 6
         icon.imageScaling = .scaleProportionallyUpOrDown
         icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.widthAnchor.constraint(equalToConstant: 96).isActive = true
-        icon.heightAnchor.constraint(equalToConstant: 96).isActive = true
+        // Ảnh thu nhỏ 96 pt, ngăn hẹp (tới khoảng 2 cm) thì co theo bề rộng ngăn.
+        let iw = icon.widthAnchor.constraint(equalToConstant: 96)
+        iw.priority = NSLayoutConstraint.Priority(700)
+        iw.isActive = true
+        icon.widthAnchor.constraint(lessThanOrEqualToConstant: 96).isActive = true
+        icon.heightAnchor.constraint(equalTo: icon.widthAnchor).isActive = true
         title.font = Theme.font(15, weight: .semibold)
         title.maximumNumberOfLines = 3
         title.lineBreakMode = .byWordWrapping
@@ -39,7 +43,10 @@ final class SidePaneController {
         placeholder.lineBreakMode = .byWordWrapping
         for v in [icon, title, subtitle, rows] as [NSView] { stack.addArrangedSubview(v) }
         stack.setCustomSpacing(16, after: subtitle)
-        view.pin(stack, insets: .init(top: 16, left: 16, bottom: 16, right: 16))
+        view.pin(stack, insets: .init(top: 16, left: 10, bottom: 16, right: 10))
+        icon.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true
+        rows.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true
+        stack.setClippingResistancePriority(NSLayoutConstraint.Priority(200), for: .horizontal)
         view.addSubview(placeholder)
         NSLayoutConstraint.activate([
             placeholder.centerYAnchor.constraint(equalTo: view.centerYAnchor),
@@ -139,6 +146,6 @@ final class SidePaneController {
         col.alignment = .leading
         col.spacing = 1
         rows.addArrangedSubview(col)
-        v.widthAnchor.constraint(lessThanOrEqualToConstant: 260).isActive = true
+        v.widthAnchor.constraint(lessThanOrEqualTo: rows.widthAnchor).isActive = true
     }
 }

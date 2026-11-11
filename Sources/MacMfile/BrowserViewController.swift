@@ -5,7 +5,7 @@ import MfileCore
 
 /// Một tab duyệt thư mục: nút điều hướng, thanh địa chỉ, ô tìm kiếm, thanh lệnh, ngăn điều hướng,
 /// vùng nội dung chế độ Chi tiết và thanh trạng thái (9 vùng ở Mục 4).
-final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate,
+final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTableViewDataSource, NSTableViewDelegate,
     NSTextFieldDelegate, NSSearchFieldDelegate, NSMenuDelegate, QLPreviewPanelDataSource,
     NSCollectionViewDataSource, NSCollectionViewDelegate {
 
@@ -67,6 +67,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         body.addArrangedSubview(buildTable())
         body.addArrangedSubview(sidePane.view)
         self.body = body
+        body.delegate = self
         sidebar.scroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
         let statusBar = buildStatusBar()
 
@@ -94,7 +95,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         body.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)
         body.setHoldingPriority(NSLayoutConstraint.Priority(200), forSubviewAt: 1)
         body.setHoldingPriority(NSLayoutConstraint.Priority(270), forSubviewAt: 2)
-        sidebar.scroll.widthAnchor.constraint(lessThanOrEqualToConstant: 480).isActive = true
+        sidebar.scroll.widthAnchor.constraint(lessThanOrEqualToConstant: 720).isActive = true
 
         setupHelp()
         sidebar.onSelect = { [weak self] p in self?.navigate(to: p) }
@@ -297,16 +298,33 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         return container
     }
 
-    /// Bề rộng mặc định của ngăn điều hướng: khoảng 4 cm thật trên màn hình (Dũng, 11/11/2026).
-    /// Tính từ kích thước vật lý của màn hình; mỗi lần mở đều trở về mức này, người dùng kéo rộng khi cần.
-    static func defaultSidebarWidth(on screen: NSScreen?) -> CGFloat {
-        let fallback: CGFloat = 190
+    /// Số điểm màn hình ứng với một milimét thật (tính từ kích thước vật lý của màn hình).
+    static func pointsPerMM(on screen: NSScreen?) -> CGFloat {
+        let fallback: CGFloat = 4.8
         guard let screen = screen ?? NSScreen.main,
               let num = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return fallback }
         let mm = CGDisplayScreenSize(CGDirectDisplayID(num.uint32Value)).width
         guard mm > 50 else { return fallback }
-        let pointsPerMM = screen.frame.width / mm
-        return min(max((40 * pointsPerMM).rounded(), 130), 260)
+        return screen.frame.width / mm
+    }
+
+    /// Ngăn điều hướng: mặc định khoảng 8 cm thật (Dũng, 11/11/2026: gấp đôi mức 4 cm trước đó),
+    /// mỗi lần mở đều trở về mức này; người dùng kéo rộng hoặc hẹp khi cần.
+    static func defaultSidebarWidth(on screen: NSScreen?) -> CGFloat {
+        min(max((80 * pointsPerMM(on: screen)).rounded(), 260), 560)
+    }
+
+    /// Ngăn chi tiết / xem trước bên phải: mặc định khoảng 4 cm, kéo hẹp được tới khoảng 2 cm.
+    static func defaultPaneWidth(on screen: NSScreen?) -> CGFloat {
+        min(max((40 * pointsPerMM(on: screen)).rounded(), 150), 320)
+    }
+    static func minPaneWidth(on screen: NSScreen?) -> CGFloat {
+        min(max((20 * pointsPerMM(on: screen)).rounded(), 72), 160)
+    }
+
+    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        guard splitView === body, dividerIndex == 1 else { return proposedMaximumPosition }
+        return min(proposedMaximumPosition, splitView.bounds.width - Self.minPaneWidth(on: view.window?.screen))
     }
 
     /// Đặt bề rộng ngăn điều hướng khi khung đã có kích thước thật; đặt trong loadView thì bị bỏ qua vì lúc đó bề rộng còn 0.
@@ -317,7 +335,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         didPlaceDividers = true
         body.setPosition(Self.defaultSidebarWidth(on: view.window?.screen), ofDividerAt: 0)
         let w = body.bounds.width
-        body.setPosition(sidePane.kind == .none ? w : max(400, w - 300), ofDividerAt: 1)
+        body.setPosition(sidePane.kind == .none ? w : max(400, w - Self.defaultPaneWidth(on: view.window?.screen)), ofDividerAt: 1)
     }
 
     // MARK: Ngăn chi tiết / xem trước (FR-07)
@@ -333,7 +351,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         sidePane.update(selection: selectedItems, folder: currentPath)
         body.layoutSubtreeIfNeeded()
         let w = body.bounds.width
-        body.setPosition(newKind == .none ? w : max(400, w - 300), ofDividerAt: 1)
+        body.setPosition(newKind == .none ? w : max(400, w - Self.defaultPaneWidth(on: view.window?.screen)), ofDividerAt: 1)
     }
 
     @objc func toggleDetailsPane(_ sender: Any?) { showPane(.details) }
