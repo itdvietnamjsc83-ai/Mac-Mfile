@@ -57,7 +57,8 @@ final class BreadcrumbBar: NSView {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         stack.addArrangedSubview(overflow)
         stack.setVisibilityPriority(.notVisible, for: overflow)
-        let icon = NSImageView(image: Theme.symbol(list.first?.path == SpecialLocation.home ? "house" : "folder.fill") ?? NSImage())
+        let rootSymbol = list.first?.path == SpecialLocation.home ? "house" : "folder.fill"
+        let icon = NSImageView(image: FileIcons.small(rootSymbol, size: 16) ?? Theme.symbol(rootSymbol) ?? NSImage())
         icon.contentTintColor = list.first?.path == SpecialLocation.home ? Theme.text : NSColor(srgbRed: 0.91, green: 0.69, blue: 0.16, alpha: 1)
         stack.addArrangedSubview(icon)
         stack.setCustomSpacing(4, after: icon)
@@ -129,7 +130,7 @@ final class BreadcrumbBar: NSView {
             let it = NSMenuItem(title: t, action: #selector(menuGo(_:)), keyEquivalent: "")
             it.target = self
             it.representedObject = p
-            it.image = Theme.symbol("folder.fill", size: 12)
+            it.image = FileIcons.small("folder.fill", size: 14) ?? Theme.symbol("folder.fill", size: 12)
             if p == next { it.state = .on }
             m.addItem(it)
         }

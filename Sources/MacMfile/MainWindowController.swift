@@ -310,7 +310,7 @@ final class TabItemView: ColorView {
         layer?.cornerRadius = 8
         layer?.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         heightAnchor.constraint(equalToConstant: 34).isActive = true
-        let icon = NSImageView(image: NSWorkspace.shared.icon(forFile: path))
+        let icon = NSImageView(image: FileIcons.icon(for: path))
         icon.translatesAutoresizingMaskIntoConstraints = false
         let t = label(title)
         t.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)

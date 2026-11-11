@@ -788,7 +788,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         switch id {
         case "name":
             t = label(Settings.displayName(it))
-            let icon = NSImageView(image: NSWorkspace.shared.icon(forFile: it.path))
+            let icon = NSImageView(image: FileIcons.icon(for: it.path))
             icon.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(icon)
             cell.imageView = icon

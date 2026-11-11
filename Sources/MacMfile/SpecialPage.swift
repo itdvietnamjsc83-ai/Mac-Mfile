@@ -292,7 +292,7 @@ final class TileView: NSView, SelectablePageItem {
     init(path: String, title t: String, subtitle s: String) {
         self.path = path
         super.init(frame: .zero)
-        icon.image = NSWorkspace.shared.icon(forFile: path)
+        icon.image = FileIcons.icon(for: path)
         icon.imageScaling = .scaleProportionallyUpOrDown
         title.stringValue = t
         subtitle.stringValue = s
@@ -358,7 +358,7 @@ final class RecentRow: NSView, SelectablePageItem {
     init(path: String, date d: Date?) {
         self.path = path
         super.init(frame: .zero)
-        icon.image = NSWorkspace.shared.icon(forFile: path)
+        icon.image = FileIcons.icon(for: path)
         name.stringValue = (path as NSString).lastPathComponent
         date.stringValue = d.map { Formatting.date($0) } ?? ""
         let parent = (path as NSString).deletingLastPathComponent
