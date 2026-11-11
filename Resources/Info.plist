@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Mac Mfile</string>
+    <key>CFBundleDisplayName</key>
+    <string>Mac Mfile</string>
+    <key>CFBundleIdentifier</key>
+    <string>vn.macmfile.app</string>
+    <key>CFBundleExecutable</key>
+    <string>MacMfile</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__BUILD__</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>vi</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>vi</string>
+        <string>en</string>
+    </array>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 Công ty cổ phần Công nghệ ITD Việt Nam. Bảo lưu mọi quyền.</string>
+</dict>
+</plist>

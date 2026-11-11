@@ -1,0 +1,38 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build và kiểm thử trên macOS
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Phiên bản Swift
+        run: swift --version
+
+      - name: Kiểm thử phần lõi
+        run: swift test
+
+      - name: Đóng gói ứng dụng
+        run: scripts/bundle.sh "0.1.0" "${{ github.run_number }}"
+
+      - name: Tải lên bản build
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacMfile-0.1.0-build${{ github.run_number }}
+          path: |
+            build/MacMfile-*.dmg
+            build/MacMfile-*.zip
+          if-no-files-found: error
+          retention-days: 30
