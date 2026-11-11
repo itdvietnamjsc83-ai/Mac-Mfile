@@ -22,8 +22,9 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 mkdir -p "$APP/Contents/Resources/Fonts"
 cp Resources/Fonts/* "$APP/Contents/Resources/Fonts/"
 if SEL="$(mktemp -d)" && git clone -q --depth 1 https://github.com/microsoft/Selawik "$SEL/s" 2>/dev/null; then
-  find "$SEL/s" -name 'selawk*.ttf' -exec cp {} "$APP/Contents/Resources/Fonts/" \; || true
+  find "$SEL/s" \( -iname 'selaw*.ttf' -o -iname 'selaw*.otf' \) -exec cp {} "$APP/Contents/Resources/Fonts/" \; || true
   find "$SEL/s" -maxdepth 1 -iname 'LICENSE*' -exec cp {} "$APP/Contents/Resources/Fonts/Selawik-LICENSE.txt" \; || true
+  find "$SEL/s" -maxdepth 2 -not -path '*/.git*' | head -40 || true
 fi
 ls "$APP/Contents/Resources/Fonts"
 
