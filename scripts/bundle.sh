@@ -21,6 +21,14 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 # Phông và biểu tượng đóng kèm: Fluent System Icons, Fluent Emoji (MIT), Open Sans (OFL).
 mkdir -p "$APP/Contents/Resources/Fonts"
 cp Resources/Fonts/* "$APP/Contents/Resources/Fonts/"
+# Biểu tượng ứng dụng: thư mục vàng kiểu Windows 11 (Fluent Emoji, MIT) trên nền xanh, dựng .icns từ ảnh 1024 px.
+ICONSET="$(mktemp -d)/AppIcon.iconset"
+mkdir -p "$ICONSET"
+for s in 16 32 128 256 512; do
+  sips -z $s $s Resources/AppIcon-1024.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+  sips -z $((s * 2)) $((s * 2)) Resources/AppIcon-1024.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+done
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 mkdir -p "$APP/Contents/Resources/Icons"
 cp Resources/Icons/* "$APP/Contents/Resources/Icons/"
 ls "$APP/Contents/Resources/Fonts"
