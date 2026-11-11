@@ -392,3 +392,64 @@ final class CloudStatusTests: XCTestCase {
         XCTAssertFalse(CloudStatus.isCloudPath("/Users/a/Documents", home: "/Users/a"))
     }
 }
+
+final class OfficeMetadataTests: XCTestCase {
+    let core = """
+    <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    <cp:coreProperties xmlns:cp="x" xmlns:dc="y" xmlns:dcterms="z"><dc:title>Báo cáo &amp; dự toán</dc:title><dc:creator>Nguyễn Văn A</dc:creator><cp:lastModifiedBy>Trần B</cp:lastModifiedBy><cp:revision>7</cp:revision><cp:lastPrinted>2026-10-01T00:00:00Z</cp:lastPrinted><dcterms:created xsi:type="dcterms:W3CDTF">2026-10-29T08:40:00Z</dcterms:created></cp:coreProperties>
+    """
+    let app = "<Properties xmlns=\"a\"><Template>Normal.dotm</Template><TotalTime>95</TotalTime><Application>Microsoft Office Word</Application><Company>ITD</Company></Properties>"
+
+    func testReadAndSet() {
+        XCTAssertEqual(OfficeMetadata.value(of: "dc:title", in: core), "Báo cáo & dự toán")
+        XCTAssertEqual(OfficeMetadata.value(of: "dcterms:created", in: core), "2026-10-29T08:40:00Z")
+        XCTAssertNil(OfficeMetadata.value(of: "dc:subject", in: core))
+        let x = OfficeMetadata.setting("dc:subject", to: "Hồ sơ <mời>", in: core, rootClose: "</cp:coreProperties>")
+        XCTAssertEqual(OfficeMetadata.value(of: "dc:subject", in: x), "Hồ sơ <mời>")
+        XCTAssertTrue(x.contains("&lt;mời&gt;"))
+        let y = OfficeMetadata.setting("dc:creator", to: "Lê C", in: core, rootClose: "</cp:coreProperties>")
+        XCTAssertEqual(OfficeMetadata.value(of: "dc:creator", in: y), "Lê C")
+    }
+
+    func testClean() {
+        let c = OfficeMetadata.cleaned(core, part: .core)
+        XCTAssertEqual(OfficeMetadata.value(of: "dc:creator", in: c), "")
+        XCTAssertEqual(OfficeMetadata.value(of: "cp:lastModifiedBy", in: c), "")
+        XCTAssertEqual(OfficeMetadata.value(of: "dc:title", in: c), "")
+        XCTAssertNil(OfficeMetadata.value(of: "cp:lastPrinted", in: c))
+        XCTAssertEqual(OfficeMetadata.value(of: "cp:revision", in: c), "1")
+        XCTAssertEqual(OfficeMetadata.value(of: "dcterms:created", in: c), "2026-10-29T08:40:00Z")
+        let a = OfficeMetadata.cleaned(app, part: .app)
+        XCTAssertEqual(OfficeMetadata.value(of: "Company", in: a), "")
+        XCTAssertEqual(OfficeMetadata.value(of: "Template", in: a), "")
+        XCTAssertEqual(OfficeMetadata.value(of: "TotalTime", in: a), "0")
+        XCTAssertEqual(OfficeMetadata.value(of: "Application", in: a), "Microsoft Office Word")
+        XCTAssertEqual(OfficeMetadata.cleanedCustom("<?xml?><Properties xmlns=\"q\"><property name=\"Khách\"><vt:lpwstr>X</vt:lpwstr></property></Properties>"), "<?xml?><Properties xmlns=\"q\"></Properties>")
+    }
+
+    #if os(macOS)
+    func testFileRoundTrip() throws {
+        let fm = FileManager.default
+        let dir = NSTemporaryDirectory() + "office-test-" + UUID().uuidString
+        try fm.createDirectory(atPath: dir + "/docProps", withIntermediateDirectories: true)
+        try "<Types/>".write(toFile: dir + "/[Content_Types].xml", atomically: true, encoding: .utf8)
+        try core.write(toFile: dir + "/docProps/core.xml", atomically: true, encoding: .utf8)
+        try app.write(toFile: dir + "/docProps/app.xml", atomically: true, encoding: .utf8)
+        let doc = dir + "/Hồ sơ.docx"
+        XCTAssertTrue(ArchiveTool.run("/usr/bin/zip", ["-X", "-r", "-q", doc, "[Content_Types].xml", "docProps"], cwd: dir).0)
+        XCTAssertEqual(OfficeMetadata.read(doc)["creator"], "Nguyễn Văn A")
+        XCTAssertEqual(OfficeMetadata.read(doc)["company"], "ITD")
+        try OfficeMetadata.write(doc, ["subject": "Dự thầu", "company": "Công ty ITD"])
+        XCTAssertEqual(OfficeMetadata.read(doc)["subject"], "Dự thầu")
+        XCTAssertEqual(OfficeMetadata.read(doc)["company"], "Công ty ITD")
+        XCTAssertTrue(MetadataCleaner.canClean(doc))
+        let copy = dir + "/Hồ sơ - Bản sao.docx"
+        try MetadataCleaner.clean(doc, to: copy)
+        XCTAssertEqual(OfficeMetadata.read(copy)["creator"], "")
+        XCTAssertEqual(OfficeMetadata.read(doc)["creator"], "Nguyễn Văn A")
+        try MetadataCleaner.cleanInPlace(doc)
+        XCTAssertEqual(OfficeMetadata.read(doc)["lastModifiedBy"], "")
+        try? fm.removeItem(atPath: dir)
+    }
+    #endif
+}
