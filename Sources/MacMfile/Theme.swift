@@ -51,7 +51,10 @@ enum Theme {
         return NSFont.systemFont(ofSize: size, weight: weight)
     }
 
+    /// Biểu tượng kiểu Windows 11: vẽ từ phông Fluent UI System Icons (MIT, Microsoft) đóng kèm app;
+    /// tên nào chưa có glyph thì lùi về SF Symbols.
     static func symbol(_ name: String, size: CGFloat = 14) -> NSImage? {
+        if let img = FluentIcons.image(name, size: size) { return img }
         let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)
         return img?.withSymbolConfiguration(.init(pointSize: size, weight: .regular))
     }
@@ -191,5 +194,87 @@ final class ContextIconRow: NSView {
         parentMenu?.cancelTracking()
         let target = owner
         DispatchQueue.main.async { _ = target?.perform(sel, with: nil) }
+    }
+}
+
+/// Phông biểu tượng Fluent (bản rút gọn chỉ gồm các glyph app dùng) trong Contents/Resources/Fonts.
+enum FluentIcons {
+    static let fontName = "FluentSystemIcons-Regular"
+    /// Tên SF Symbol → mã glyph ic_fluent_*_20_regular.
+    static let glyphs: [String: UInt32] = [
+        "arrow.clockwise": 0xF13D,
+        "arrow.counterclockwise": 0xF13F,
+        "arrow.left": 0xF15B,
+        "arrow.right": 0xF181,
+        "arrow.up": 0xF19B,
+        "arrow.up.arrow.down": 0xF18A,
+        "character.cursor.ibeam": 0xF669,
+        "chevron.down": 0xF2A3,
+        "chevron.right": 0xF2B0,
+        "cloud.fill": 0xF2E4,
+        "desktopcomputer": 0xF359,
+        "doc": 0xF378,
+        "doc.on.clipboard": 0xF2D5,
+        "doc.on.doc": 0xF32B,
+        "ellipsis": 0xE824,
+        "externaldrive": 0xE6E3,
+        "eye": 0xE5F2,
+        "eye.slash": 0xE5F5,
+        "folder.fill": 0xF418,
+        "gearshape": 0xF6A9,
+        "house": 0xF480,
+        "info.circle": 0xF4A3,
+        "line.3.horizontal.decrease": 0xF406,
+        "list.bullet": 0xECD9,
+        "lock.fill": 0xE78F,
+        "magnifyingglass": 0xF68F,
+        "moon": 0xF87D,
+        "network": 0xF45A,
+        "photo": 0xF488,
+        "pin": 0xF601,
+        "plus": 0xF109,
+        "plus.circle.fill": 0xF10C,
+        "questionmark.circle": 0xF63D,
+        "scissors": 0xF33A,
+        "sidebar.right": 0xE8BD,
+        "square.and.arrow.up": 0xF6AF,
+        "square.grid.2x2": 0xF462,
+        "star": 0xF70F,
+        "sun.max": 0xF8A1,
+        "trash": 0xF34C,
+        "xmark": 0xF369,
+    ]
+    private static var registered = false
+    private static var cache: [String: NSImage] = [:]
+
+    /// Gọi một lần lúc khởi động; đăng ký mọi phông trong Resources/Fonts (cả Selawik nếu bản build có).
+    static func register() {
+        guard !registered else { return }
+        registered = true
+        guard let dir = Bundle.main.resourceURL?.appendingPathComponent("Fonts"),
+              let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return }
+        for f in files where ["ttf", "otf"].contains(f.pathExtension.lowercased()) {
+            CTFontManagerRegisterFontsForURL(f as CFURL, .process, nil)
+        }
+    }
+
+    static func image(_ name: String, size: CGFloat) -> NSImage? {
+        guard let code = glyphs[name], let scalar = Unicode.Scalar(code) else { return nil }
+        register()
+        let key = "\(name)@\(size)"
+        if let c = cache[key] { return c }
+        // Glyph Fluent 20px vẽ đầy khung em; cỡ phông lớn hơn cỡ SF một chút để cân thị giác.
+        guard let font = NSFont(name: fontName, size: size * 1.15) else { return nil }
+        let str = NSAttributedString(string: String(Character(scalar)), attributes: [.font: font, .foregroundColor: NSColor.black])
+        let box = NSSize(width: ceil(size * 1.15), height: ceil(size * 1.15))
+        let img = NSImage(size: box, flipped: false) { rect in
+            let b = str.boundingRect(with: rect.size, options: [.usesLineFragmentOrigin])
+            str.draw(at: NSPoint(x: (rect.width - b.width) / 2, y: (rect.height - b.height) / 2))
+            return true
+        }
+        img.isTemplate = true
+        img.accessibilityDescription = name
+        cache[key] = img
+        return img
     }
 }

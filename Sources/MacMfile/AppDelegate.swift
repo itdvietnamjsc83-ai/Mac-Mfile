@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let firstRunKey = "MacMfile.firstRunDone"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        FluentIcons.register()
         Theme.apply()
         buildMainMenu()
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: L10n.didChangeNotification, object: nil)

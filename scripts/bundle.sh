@@ -18,6 +18,15 @@ cp "$BIN" "$APP/Contents/MacOS/MacMfile"
 sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD/" Resources/Info.plist > "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
+# Phông: biểu tượng Fluent (MIT) đóng kèm sẵn; Selawik (OFL, thay cho Segoe UI) tải lúc build nếu được, lỗi thì bỏ qua.
+mkdir -p "$APP/Contents/Resources/Fonts"
+cp Resources/Fonts/* "$APP/Contents/Resources/Fonts/"
+if SEL="$(mktemp -d)" && git clone -q --depth 1 https://github.com/microsoft/Selawik "$SEL/s" 2>/dev/null; then
+  find "$SEL/s" -name 'selawk*.ttf' -exec cp {} "$APP/Contents/Resources/Fonts/" \; || true
+  find "$SEL/s" -maxdepth 1 -iname 'LICENSE*' -exec cp {} "$APP/Contents/Resources/Fonts/Selawik-LICENSE.txt" \; || true
+fi
+ls "$APP/Contents/Resources/Fonts"
+
 # Ký ad-hoc để macOS chạy được bản thử (chưa phải chữ ký Developer ID).
 codesign --force --deep --sign - "$APP"
 
