@@ -146,7 +146,7 @@ final class OptionsWindowController: NSWindowController, NSWindowDelegate, NSTab
 
     private func add(_ section: Int, _ titleKey: String, _ subKey: String? = nil, _ control: NSView?) {
         let title = L10n.t(titleKey)
-        rows.append(Row(section: section, title: title + " " + (subKey.map(L10n.t) ?? ""), view: card(title, subKey.map(L10n.t), control)))
+        rows.append(Row(section: section, title: title + " " + (subKey.map { L10n.t($0) } ?? ""), view: card(title, subKey.map { L10n.t($0) }, control)))
     }
 
     private func toggle(_ section: Int, _ titleKey: String, _ subKey: String? = nil, get: Bool, set: @escaping (Bool) -> Void) {
@@ -158,7 +158,7 @@ final class OptionsWindowController: NSWindowController, NSWindowDelegate, NSTab
 
     private func popup(_ section: Int, _ titleKey: String, _ subKey: String? = nil, items: [String], selected: Int, set: @escaping (Int) -> Void) {
         let p = NSPopUpButton()
-        p.addItems(withTitles: items.map(L10n.t))
+        p.addItems(withTitles: items.map { L10n.t($0) })
         p.selectItem(at: selected)
         p.widthAnchor.constraint(equalToConstant: 160).isActive = true
         commits.append { set(p.indexOfSelectedItem) }
