@@ -111,6 +111,11 @@ final class SidePaneController {
         let path = current.first?.path ?? folderPath
         let attrs = (try? fm.attributesOfItem(atPath: path)) ?? [:]
         icon.image = FileIcons.icon(for: path)
+        // Ảnh, video, PDF, tài liệu: hiện ảnh thu nhỏ thật như ngăn chi tiết của Windows.
+        Thumbnails.load(path, size: 256) { [weak self] img in
+            guard let self, (self.current.first?.path ?? self.folderPath) == path else { return }
+            self.icon.image = img
+        }
         let item = current.first
         title.stringValue = item?.name ?? (folderPath as NSString).lastPathComponent
         subtitle.stringValue = item?.typeDescription() ?? L10n.t("typeFolder")

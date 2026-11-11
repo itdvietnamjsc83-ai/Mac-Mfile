@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookThumbnailing
 import MfileCore
 import UniformTypeIdentifiers
 
@@ -387,5 +388,36 @@ final class CollapsingBar: ColorView {
         }
         hiddenButtons = collapsible[hideFrom...].compactMap { $0 as? FlatButton }
         if changed { needsLayout = true }
+    }
+}
+
+
+/// Ảnh thu nhỏ như Windows (ngăn chi tiết, Biểu tượng lớn…): ảnh, video, PDF, tài liệu Office hiện nội dung thật.
+enum Thumbnails {
+    private static let cache = NSCache<NSString, NSImage>()
+
+    /// Loại tệp nên hiện ảnh thu nhỏ thay cho biểu tượng.
+    static func wants(_ path: String) -> Bool {
+        let ext = (path as NSString).pathExtension.lowercased()
+        guard !ext.isEmpty, let t = UTType(filenameExtension: ext) else { return false }
+        return t.conforms(to: .image) || t.conforms(to: .movie) || t.conforms(to: .pdf)
+            || t.conforms(to: .presentation) || t.conforms(to: .spreadsheet)
+            || ["docx", "doc", "pages", "key", "numbers", "rtf"].contains(ext)
+    }
+
+    /// Gọi `done` trên luồng chính với ảnh thu nhỏ (hoặc không gọi nếu không tạo được).
+    static func load(_ path: String, size: CGFloat, scale: CGFloat = NSScreen.main?.backingScaleFactor ?? 2, done: @escaping (NSImage) -> Void) {
+        guard wants(path) else { return }
+        let key = "\(path)@\(Int(size))" as NSString
+        if let c = cache.object(forKey: key) { done(c); return }
+        let req = QLThumbnailGenerator.Request(fileAt: URL(fileURLWithPath: path), size: CGSize(width: size, height: size),
+                                               scale: scale, representationTypes: .thumbnail)
+        QLThumbnailGenerator.shared.generateBestRepresentation(for: req) { rep, _ in
+            guard let img = rep?.nsImage else { return }
+            DispatchQueue.main.async {
+                cache.setObject(img, forKey: key)
+                done(img)
+            }
+        }
     }
 }
