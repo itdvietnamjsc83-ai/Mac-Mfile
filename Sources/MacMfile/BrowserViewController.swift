@@ -42,6 +42,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     private let langButton = FlatButton(title: "VI", symbol: nil, target: nil, action: nil)
     private var backB: FlatButton!, fwdB: FlatButton!, upB: FlatButton!, refreshB: FlatButton!
     private var commandButtons: [(FlatButton, String)] = []
+    private weak var commandBar: CollapsingBar?
     private var messageTimer: Timer?
 
     init(startPath: String) {
@@ -145,8 +146,9 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         bar.pin(stack, insets: .init(top: 7, left: 10, bottom: 7, right: 10))
         address.setContentHuggingPriority(.defaultLow, for: .horizontal)
         // Kích thước cửa sổ chỉ đổi khi người dùng kéo: nội dung dài (đường dẫn sâu) không được đẩy cửa sổ giãn ra.
-        address.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        // Ô địa chỉ co lại trước tiên; nút Quay lại/Tiến/Lên/Làm mới và ô tìm kiếm luôn hiện đủ.
+        address.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        for v in [backB!, fwdB!, upB!, refreshB!, search] { v.setContentCompressionResistancePriority(.required, for: .horizontal) }
         bar.addSubview(breadcrumb)
         NSLayoutConstraint.activate([
             breadcrumb.leadingAnchor.constraint(equalTo: address.leadingAnchor, constant: 2),
@@ -160,7 +162,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     private func buildCommandBar() -> NSView {
-        let bar = ColorView(Theme.chrome)
+        let bar = CollapsingBar(Theme.chrome)
         bar.bottomBorder = true
         func b(_ key: String, _ symbol: String, _ sel: Selector) -> FlatButton {
             let x = FlatButton(title: L10n.t(key), symbol: symbol, target: self, action: sel)
@@ -191,13 +193,16 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         let stack = NSStackView(views: views)
         stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
-        // Cửa sổ hẹp: các nút cuối thanh lệnh bị che đi chứ không đẩy cửa sổ giãn ra.
-        stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
-        for (i, v) in views.enumerated() { stack.setVisibilityPriority(NSStackView.VisibilityPriority(rawValue: Float(1000 - i * 20)), for: v) }
+        // Cửa sổ hẹp: các nút cuối thanh lệnh được gom vào "Xem thêm (…)", không đẩy cửa sổ giãn ra.
+        stack.setClippingResistancePriority(NSLayoutConstraint.Priority(200), for: .horizontal)
         bar.addSubview(stack)
         // Nút "Chi tiết" ở góc phải thanh lệnh như Windows 11: bật/tắt ngăn chi tiết.
         paneButton = b("details", "sidebar.right", #selector(toggleDetailsPane(_:)))
         bar.addSubview(paneButton)
+        bar.collapsible = Array(views.dropLast())
+        bar.moreButton = views.last
+        bar.trailingFixed = paneButton
+        commandBar = bar
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 10),
             stack.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
@@ -515,8 +520,11 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         let stack = NSStackView(views: [status, message, NSView(), langButton, themeButton, detailsToggle, iconsToggle])
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
-        message.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // Chữ trạng thái co lại (cắt bớt); các nút VI/EN, sáng/tối, kiểu xem bên phải luôn hiện.
+        for v in [status, message] {
+            v.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+            v.lineBreakMode = .byTruncatingTail
+        }
         bar.pin(stack, insets: .init(top: 0, left: 12, bottom: 0, right: 8))
         for b in [langButton, detailsToggle!, iconsToggle!, themeButton!] { b.fixedHeight.constant = 22 }
         return bar
@@ -1725,7 +1733,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     // MARK: Menu thả của thanh lệnh
 
     private func popUp(_ menu: NSMenu, from sender: Any?) {
-        guard let v = sender as? NSView else { return }
+        // Gọi từ menu "Xem thêm" (nút đã bị gom do cửa sổ hẹp): mở menu ngay dưới nút "…".
+        guard let v = (sender as? NSView) ?? commandButtons.first(where: { $0.1 == "seeMore" })?.0 else { return }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: v.bounds.height + 4), in: v)
     }
 
@@ -1804,12 +1813,24 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             it.target = self
             m.addItem(it)
         }
+        // Các nút thanh lệnh đang bị gom vì cửa sổ hẹp (như Windows 11).
+        let hidden = commandBar?.hiddenButtons ?? []
+        for b in hidden {
+            let it = NSMenuItem(title: b.title, action: b.action, keyEquivalent: "")
+            it.target = self
+            it.image = b.image
+            m.addItem(it)
+        }
+        if !hidden.isEmpty { m.addItem(.separator()) }
         add(L10n.t("pinQuick") + "\tCmd+Shift+P", #selector(pinSelected(_:)))
         add(L10n.t("selectAll") + "\tCmd+A", #selector(selectAllItems(_:)))
         add(L10n.t("copyPath") + "\tCmd+Shift+C", #selector(copyPath(_:)))
         add(L10n.t("properties") + "\tOption+Enter", #selector(showInfo(_:)))
         m.addItem(.separator())
         add(L10n.t("language"), #selector(toggleLanguage(_:)))
+        let opt = NSMenuItem(title: L10n.t("optionsMenu") + "\tCmd+,", action: #selector(AppDelegate.showOptions(_:)), keyEquivalent: "")
+        opt.target = NSApp.delegate
+        m.addItem(opt)
         popUp(m, from: sender)
     }
 

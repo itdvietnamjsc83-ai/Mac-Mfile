@@ -10,10 +10,10 @@ final class SidePaneController {
     private(set) var kind: SidePaneKind = .none
     private let stack = NSStackView()
     private let icon = NSImageView()
-    private let title = label("", size: 15)
-    private let subtitle = label("", color: Theme.secondaryText)
+    private let title = paneLabel("", size: 15)
+    private let subtitle = paneLabel("", color: Theme.secondaryText)
     private let rows = NSStackView()
-    private let placeholder = label("", color: Theme.secondaryText)
+    private let placeholder = paneLabel("", color: Theme.secondaryText)
     private var preview: QLPreviewView?
     private var current: [FileItem] = []
     private var folderPath = ""
@@ -125,8 +125,8 @@ final class SidePaneController {
     }
 
     private func addRow(_ key: String, _ value: String) {
-        let k = label(L10n.t(key), size: 11, color: Theme.secondaryText)
-        let v = label(value)
+        let k = paneLabel(L10n.t(key), size: 11, color: Theme.secondaryText)
+        let v = paneLabel(value)
         v.lineBreakMode = .byTruncatingMiddle
         v.toolTip = value
         let col = NSStackView(views: [k, v])

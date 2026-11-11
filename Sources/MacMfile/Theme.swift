@@ -176,6 +176,14 @@ func label(_ text: String, size: CGFloat = 12, color: NSColor = Theme.text) -> N
     return l
 }
 
+/// Nhãn trong các ngăn co giãn (ngăn chi tiết, trang chủ, hướng dẫn): chữ dài thì cắt bớt hoặc xuống dòng,
+/// không bao giờ đẩy ngăn hay cửa sổ giãn ra (độ ưu tiên chống co 1 < 500 của kích thước cửa sổ).
+func paneLabel(_ text: String, size: CGFloat = 12, color: NSColor = Theme.text) -> NSTextField {
+    let l = label(text, size: size, color: color)
+    l.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+    return l
+}
+
 /// Hàng biểu tượng trên cùng của menu chuột phải Windows 11 (Cắt, Sao chép, Đổi tên, Chia sẻ, Xóa).
 final class ContextIconRow: NSView {
     private weak var owner: NSObject?
@@ -345,5 +353,39 @@ enum FileIcons {
         if path == SpecialLocation.thisMac { return named("desktop_computer") ?? NSImage() }
         if let k = kind(of: path), let img = named(k) { return img }
         return NSWorkspace.shared.icon(forFile: path)
+    }
+}
+
+/// Thanh lệnh kiểu Windows 11: thiếu chỗ thì các nút cuối được gom vào nút "Xem thêm (…)" (luôn hiện);
+/// nút cố định bên phải (Chi tiết) luôn hiện. Không bao giờ đẩy cửa sổ giãn ra.
+final class CollapsingBar: ColorView {
+    /// Các mục co được, theo thứ tự trái → phải (nút và vạch ngăn).
+    var collapsible: [NSView] = []
+    var moreButton: NSView?
+    var trailingFixed: NSView?
+    var leadingInset: CGFloat = 10
+    var spacing: CGFloat = 2
+    private(set) var hiddenButtons: [FlatButton] = []
+
+    override func layout() {
+        super.layout()
+        func w(_ v: NSView) -> CGFloat { v is FlatButton ? v.intrinsicContentSize.width : max(v.intrinsicContentSize.width, 1) }
+        let fixed = leadingInset + (moreButton.map { w($0) } ?? 0) + (trailingFixed.map { w($0) + 20 } ?? 10)
+        var total = fixed + collapsible.reduce(0) { $0 + w($1) + spacing }
+        var hideFrom = collapsible.count
+        while total > bounds.width, hideFrom > 0 {
+            hideFrom -= 1
+            total -= w(collapsible[hideFrom]) + spacing
+        }
+        // Vạch ngăn đứng cuối phần còn hiện thì ẩn luôn.
+        var lastVisible = hideFrom
+        while lastVisible > 0, !(collapsible[lastVisible - 1] is FlatButton) { lastVisible -= 1 }
+        var changed = false
+        for (i, v) in collapsible.enumerated() {
+            let hide = i >= lastVisible
+            if v.isHidden != hide { v.isHidden = hide; changed = true }
+        }
+        hiddenButtons = collapsible[hideFrom...].compactMap { $0 as? FlatButton }
+        if changed { needsLayout = true }
     }
 }

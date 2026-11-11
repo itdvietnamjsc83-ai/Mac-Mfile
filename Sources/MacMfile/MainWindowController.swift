@@ -50,7 +50,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         tabStack.spacing = 2
         tabStack.alignment = .bottom
         tabStack.distribution = .fillEqually
-        tabStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        tabStack.setClippingResistancePriority(NSLayoutConstraint.Priority(200), for: .horizontal)
         tabStack.translatesAutoresizingMaskIntoConstraints = false
         strip.addSubview(tabStack)
         let plus = FlatButton(title: "", symbol: "plus", target: self, action: #selector(newTab(_:)))

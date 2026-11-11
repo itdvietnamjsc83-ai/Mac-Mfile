@@ -431,6 +431,7 @@ public enum L10n {
         "cloudFreeUpFailedInfo": ("Tệp có thể đang đồng bộ hoặc {0} chưa cho phép. Hãy đợi đồng bộ xong rồi thử lại, hoặc dùng mục \"Free Up Space\" của {0} trong Finder.", "The files may still be syncing, or {0} doesn't allow it. Wait for syncing to finish and try again, or use {0}'s \"Free Up Space\" in Finder."),
         "cloudLinkCopied": ("Đã sao chép liên kết iCloud.", "iCloud link copied."),
         "cloudLinkFailed": ("Không tạo được liên kết. Hãy đợi tệp tải lên iCloud xong.", "Couldn't create a link. Wait for the file to finish uploading to iCloud."),
+        "optionsMenu": ("Tùy chọn", "Options"),
         "compactView": ("Chế độ xem thu gọn", "Compact view"),
         "show": ("Hiện", "Show"),
         "fileExtensions": ("Phần mở rộng tên tệp", "File name extensions"),

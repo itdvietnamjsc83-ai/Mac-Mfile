@@ -64,7 +64,7 @@ final class SpecialPageController: NSObject {
     }
 
     private func header(_ key: String, count: Int? = nil) {
-        let t = label(L10n.t(key) + (count.map { " (\($0))" } ?? ""), size: 14)
+        let t = paneLabel(L10n.t(key) + (count.map { " (\($0))" } ?? ""), size: 14)
         t.font = Theme.font(14, weight: .semibold)
         t.translatesAutoresizingMaskIntoConstraints = true
         doc.addSubview(t)
@@ -72,7 +72,7 @@ final class SpecialPageController: NSObject {
     }
 
     private func empty(_ key: String) {
-        let t = label(L10n.t(key), color: Theme.secondaryText)
+        let t = paneLabel(L10n.t(key), color: Theme.secondaryText)
         t.translatesAutoresizingMaskIntoConstraints = true
         doc.addSubview(t)
         blocks.append(.empty(t))
@@ -284,8 +284,8 @@ final class TileView: NSView, SelectablePageItem {
     var isPinned = false
     var usage: Double? { didSet { needsLayout = true; needsDisplay = true } }
     private let icon = NSImageView()
-    private let title = label("")
-    private let subtitle = label("", size: 11, color: Theme.secondaryText)
+    private let title = paneLabel("")
+    private let subtitle = paneLabel("", size: 11, color: Theme.secondaryText)
     private var isSel = false { didSet { needsDisplay = true } }
     private var hover = false { didSet { needsDisplay = true } }
 
@@ -350,9 +350,9 @@ final class RecentRow: NSView, SelectablePageItem {
     let path: String
     weak var owner: SpecialPageController?
     private let icon = NSImageView()
-    private let name = label("")
-    private let date = label("", color: Theme.secondaryText)
-    private let location = label("", color: Theme.secondaryText)
+    private let name = paneLabel("")
+    private let date = paneLabel("", color: Theme.secondaryText)
+    private let location = paneLabel("", color: Theme.secondaryText)
     private var isSel = false { didSet { needsDisplay = true } }
 
     init(path: String, date d: Date?) {
