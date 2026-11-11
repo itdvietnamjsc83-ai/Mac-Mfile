@@ -105,9 +105,7 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
         NotificationCenter.default.addObserver(self, selector: #selector(settingsChanged), name: Settings.didChange, object: nil)
         reloadTexts()
         setViewMode(viewPrefs.mode(for: currentPath), remember: false)
-        if let k = UserDefaults.standard.string(forKey: "MacMfile.sidePane").flatMap(SidePaneKind.init(rawValue:)), k != .none {
-            DispatchQueue.main.async { self.showPane(k) }
-        }
+        // Ngăn Chi tiết luôn ẩn khi mở ứng dụng; bấm "Chi tiết" mới hiện (Dũng, 11/11/2026).
         load()
     }
 
@@ -308,10 +306,10 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
         return screen.frame.width / mm
     }
 
-    /// Ngăn điều hướng: mặc định khoảng 8 cm thật (Dũng, 11/11/2026: gấp đôi mức 4 cm trước đó),
+    /// Ngăn điều hướng: mặc định khoảng 4,8 cm thật (Dũng, 11/11/2026: bằng 60% mức 8 cm của bản trước),
     /// mỗi lần mở đều trở về mức này; người dùng kéo rộng hoặc hẹp khi cần.
     static func defaultSidebarWidth(on screen: NSScreen?) -> CGFloat {
-        min(max((80 * pointsPerMM(on: screen)).rounded(), 260), 560)
+        min(max((48 * pointsPerMM(on: screen)).rounded(), 180), 400)
     }
 
     /// Ngăn chi tiết / xem trước bên phải: mặc định khoảng 4 cm, kéo hẹp được tới khoảng 2 cm.
@@ -322,10 +320,9 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
         min(max((20 * pointsPerMM(on: screen)).rounded(), 72), 160)
     }
 
-    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
-        guard splitView === body, dividerIndex == 1 else { return proposedMaximumPosition }
-        return min(proposedMaximumPosition, splitView.bounds.width - Self.minPaneWidth(on: view.window?.screen))
-    }
+    /// Bề rộng tối thiểu của ngăn Chi tiết, chỉ bật khi ngăn đang hiện (ngăn ẩn thì thu hẳn về 0, không để lại khoảng trống).
+    /// Dùng ràng buộc thay cho hàm giới hạn vị trí vạch chia của delegate, vì hàm đó làm NSSplitView bỏ qua mức giữ bề rộng.
+    private lazy var paneMinWidth: NSLayoutConstraint = sidePane.view.widthAnchor.constraint(greaterThanOrEqualToConstant: 72)
 
     /// Đặt bề rộng ngăn điều hướng khi khung đã có kích thước thật; đặt trong loadView thì bị bỏ qua vì lúc đó bề rộng còn 0.
     private var didPlaceDividers = false
@@ -344,14 +341,24 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
 
     func showPane(_ k: SidePaneKind) {
         let newKind = sidePane.kind == k ? SidePaneKind.none : k
+        let wasOpen = sidePane.kind != .none
+        if newKind == .none { paneMinWidth.isActive = false }
         sidePane.show(newKind)
-        UserDefaults.standard.set(newKind.rawValue, forKey: "MacMfile.sidePane")
         paneButton.isActive = newKind == .details
-        if newKind == .help { UserDefaults.standard.set(SidePaneKind.none.rawValue, forKey: "MacMfile.sidePane") }
         sidePane.update(selection: selectedItems, folder: currentPath)
         body.layoutSubtreeIfNeeded()
         let w = body.bounds.width
-        body.setPosition(newKind == .none ? w : max(400, w - Self.defaultPaneWidth(on: view.window?.screen)), ofDividerAt: 1)
+        if newKind == .none {
+            body.setPosition(w, ofDividerAt: 1)
+        } else {
+            // Mỗi lần bấm hiện ngăn: khoảng 4 cm. Đổi qua lại Chi tiết / Xem trước thì giữ bề rộng người dùng đã kéo.
+            if !wasOpen {
+                let sidebarRight = body.subviews.first?.frame.maxX ?? 0
+                body.setPosition(max(sidebarRight + 200, w - Self.defaultPaneWidth(on: view.window?.screen)), ofDividerAt: 1)
+            }
+            paneMinWidth.constant = Self.minPaneWidth(on: view.window?.screen)
+            paneMinWidth.isActive = true
+        }
     }
 
     @objc func toggleDetailsPane(_ sender: Any?) { showPane(.details) }
@@ -640,7 +647,7 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
             updateLocationUI()
             sidebar.select(path: currentPath)
             updateStatus()
-            sidePane.update(selection: selectedItems, folder: NSHomeDirectory())
+            sidePane.update(selection: selectedItems, folder: currentPath)
             return
         }
         tableScroll.isHidden = viewMode != .details
