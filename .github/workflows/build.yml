@@ -32,6 +32,7 @@ jobs:
         with:
           name: MacMfile-0.1.0-build${{ github.run_number }}
           path: |
+            build/MacMfile-*.pkg
             build/MacMfile-*.dmg
             build/MacMfile-*.zip
           if-no-files-found: error

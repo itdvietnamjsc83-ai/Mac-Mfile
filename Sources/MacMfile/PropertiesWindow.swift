@@ -278,6 +278,17 @@ final class PropertiesWindowController: NSWindowController, NSWindowDelegate, NS
                 if !text.isEmpty { rows.append((attr, L10n.t(key), text, false)) }
             }
         }
+        // Word, Excel, PowerPoint: thuộc tính tài liệu như tab Chi tiết của Windows, sửa được các mục mô tả.
+        if OfficeMetadata.isOffice(p) {
+            let props = OfficeMetadata.read(p)
+            for f in OfficeMetadata.fields {
+                let v = props[f.id] ?? ""
+                if !f.editable && v.isEmpty { continue }
+                var text = v
+                if ["created", "modified", "lastPrinted"].contains(f.id), let d = ISO8601DateFormatter().date(from: v) { text = Formatting.date(d) }
+                rows.append(("office." + f.id, L10n.t(f.l10nKey), text, f.editable))
+            }
+        }
         detailRows = rows.map { (key: $0.0, label: $0.1, value: $0.2, editable: $0.3) }
 
         let v = NSView()
@@ -398,6 +409,18 @@ final class PropertiesWindowController: NSWindowController, NSWindowDelegate, NS
                 try? (u as NSURL).setResourceValue(list, forKey: .tagNamesKey)
             }
             if let c = edits["comments"] { setFinderComment(paths[0], c) }
+            var office: [String: String] = [:]
+            for (k, v) in edits where k.hasPrefix("office.") { office[String(k.dropFirst(7))] = v }
+            if !office.isEmpty {
+                do { try OfficeMetadata.write(paths[0], office); edits = edits.filter { !$0.key.hasPrefix("office.") } }
+                catch {
+                    let a = NSAlert()
+                    a.messageText = L10n.t("officeWriteFailed")
+                    a.informativeText = L10n.t("officeWriteFailedInfo")
+                    a.runModal()
+                    return false
+                }
+            }
             let newName = nameField.stringValue.trimmingCharacters(in: .whitespaces)
             let old = paths[0]
             if !newName.isEmpty, newName != (old as NSString).lastPathComponent {

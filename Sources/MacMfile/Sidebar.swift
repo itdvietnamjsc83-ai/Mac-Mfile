@@ -28,7 +28,7 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
         let col = NSTableColumn(identifier: .init("nav"))
         table.addTableColumn(col)
         table.headerView = nil
-        table.rowHeight = 28
+        table.rowHeight = (28 * max(1, Theme.textScale)).rounded()
         table.intercellSpacing = NSSize(width: 0, height: 0)
         table.style = .sourceList
         table.backgroundColor = Theme.background
@@ -123,11 +123,12 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
     func numberOfRows(in tableView: NSTableView) -> Int { entries.count }
 
-    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { entries[row].separator ? 9 : 28 }
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { entries.indices.contains(row) && entries[row].separator ? 9 : 28 }
 
-    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { !entries[row].separator }
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { entries.indices.contains(row) && !entries[row].separator }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard entries.indices.contains(row) else { return nil }
         let e = entries[row]
         if e.separator {
             let v = ColorView(Theme.background)
@@ -173,7 +174,7 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
     // MARK: Kéo thả: đổi thứ tự mục ghim, thả thư mục vào để ghim
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
-        guard entries[row].isPin else { return nil }
+        guard entries.indices.contains(row), entries[row].isPin else { return nil }
         let item = NSPasteboardItem()
         item.setString(String(row), forType: dragType)
         return item

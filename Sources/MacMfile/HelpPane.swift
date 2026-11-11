@@ -11,17 +11,17 @@ final class HelpPaneView: ColorView, NSSearchFieldDelegate {
     var selectionName: (() -> String?)?
 
     private let search = NSSearchField()
-    private let context = label("", size: 11, color: Theme.secondaryText)
+    private let context = paneLabel("", size: 11, color: Theme.secondaryText)
     private let list = NSStackView()
     private let common = NSStackView()
-    private let title = label("", size: 14)
+    private let title = paneLabel("", size: 14)
 
     init() {
         super.init(Theme.chrome)
         title.font = Theme.font(14, weight: .semibold)
         let close = FlatButton(title: "", symbol: "xmark", target: self, action: #selector(closePressed))
         close.fixedHeight.constant = 22
-        let f1 = label("F1", size: 11, color: Theme.secondaryText)
+        let f1 = paneLabel("F1", size: 11, color: Theme.secondaryText)
         let head = NSStackView(views: [title, NSView(), f1, close])
         search.delegate = self
         search.sendsSearchStringImmediately = true
@@ -51,6 +51,8 @@ final class HelpPaneView: ColorView, NSSearchFieldDelegate {
         stack.alignment = .leading
         stack.spacing = 8
         pin(stack, insets: .init(top: 12, left: 12, bottom: 10, right: 12))
+        // Ngăn hẹp (tới khoảng 2 cm): nội dung cắt bớt hoặc xuống dòng, không đẩy ngăn rộng ra.
+        for st in [stack, foot, inner, list, common] { st.setClippingResistancePriority(NSLayoutConstraint.Priority(200), for: .horizontal) }
         NSLayoutConstraint.activate([
             head.widthAnchor.constraint(equalTo: stack.widthAnchor),
             search.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -90,14 +92,14 @@ final class HelpPaneView: ColorView, NSSearchFieldDelegate {
         if let n = selectionName?() { context.stringValue = L10n.f("currentSelection", n); context.isHidden = false } else { context.isHidden = true }
         list.arrangedSubviews.forEach { $0.removeFromSuperview() }
         let results = HelpTopics.search(search.stringValue)
-        if results.isEmpty { list.addArrangedSubview(label(L10n.t("helpNoResults"), color: Theme.secondaryText)) }
+        if results.isEmpty { list.addArrangedSubview(paneLabel(L10n.t("helpNoResults"), color: Theme.secondaryText)) }
         for (i, tp) in results.prefix(8).enumerated() {
             let c = card(tp, primary: i == 0)
             list.addArrangedSubview(c)
             c.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
         }
         common.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        common.addArrangedSubview(label(L10n.t("commonTasks"), size: 11, color: Theme.secondaryText))
+        common.addArrangedSubview(paneLabel(L10n.t("commonTasks"), size: 11, color: Theme.secondaryText))
         var row = NSStackView(); row.spacing = 6
         var count = 0
         for tp in HelpTopics.all where tp.common {
@@ -118,11 +120,11 @@ final class HelpPaneView: ColorView, NSSearchFieldDelegate {
         box.layer?.cornerRadius = 6
         box.layer?.borderWidth = 1
         box.layer?.borderColor = (primary ? Theme.accent : Theme.border).cgColor
-        let t = label(tp.title())
+        let t = paneLabel(tp.title())
         t.font = Theme.font(12, weight: .semibold)
         t.maximumNumberOfLines = 2
         t.lineBreakMode = .byWordWrapping
-        let body = label(tp.body(), color: Theme.text)
+        let body = paneLabel(tp.body(), color: Theme.text)
         body.maximumNumberOfLines = 0
         body.lineBreakMode = .byWordWrapping
         body.preferredMaxLayoutWidth = 270
@@ -214,7 +216,7 @@ final class CoachMarks: NSObject {
             ring = r
         }
         let vc = NSViewController()
-        let text = label(L10n.f("stepOf", index + 1, steps.count) + ": " + s.text)
+        let text = paneLabel(L10n.f("stepOf", index + 1, steps.count) + ": " + s.text)
         text.maximumNumberOfLines = 0
         text.preferredMaxLayoutWidth = 260
         let next = NSButton(title: L10n.t(index == steps.count - 1 ? "done" : "nextStep"), target: self, action: #selector(nextStep))
@@ -243,8 +245,8 @@ final class CoachMarks: NSObject {
 final class TipsWindowController: NSWindowController {
     private static var shared: TipsWindowController?
     private var index = Int.random(in: 0..<HelpTopics.tips.count)
-    private let tipTitle = label("", size: 16)
-    private let body = label("")
+    private let tipTitle = paneLabel("", size: 16)
+    private let body = paneLabel("")
     private let tryB = NSButton()
     private let showAtLaunch = NSButton(checkboxWithTitle: "", target: nil, action: nil)
 

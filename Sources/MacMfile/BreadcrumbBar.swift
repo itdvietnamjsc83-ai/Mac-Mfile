@@ -7,7 +7,7 @@ final class BreadcrumbBar: NSView {
     var onNavigate: ((String) -> Void)?
     var onEdit: (() -> Void)?
     private let stack = NSStackView()
-    private let overflow = FlatButton(title: "«", symbol: nil, target: nil, action: nil)
+    private let overflow = FlatButton(title: "…", symbol: nil, target: nil, action: nil)
     private let historyB = FlatButton(title: "", symbol: "chevron.down", target: nil, action: nil)
     private var crumbs: [Crumb] = []
 
@@ -27,10 +27,14 @@ final class BreadcrumbBar: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
+        // Đường dẫn dài không được đẩy cửa sổ giãn ra: layout() tự rút gọn các thư mục giữa vào "…".
+        stack.setClippingResistancePriority(NSLayoutConstraint.Priority(200), for: .horizontal)
+        stack.setHuggingPriority(.defaultLow, for: .horizontal)
         overflow.target = self; overflow.action = #selector(showOverflow(_:))
         historyB.target = self; historyB.action = #selector(showHistory(_:))
         historyB.toolTip = L10n.t("recentLocations")
         for b in [overflow, historyB] { b.fixedHeight.constant = 24 }
+        overflow.horizontalPadding = 8
         addSubview(stack)
         addSubview(historyB)
         NSLayoutConstraint.activate([
@@ -52,54 +56,100 @@ final class BreadcrumbBar: NSView {
     /// Bấm vào chỗ trống: chuyển sang gõ đường dẫn (như Windows).
     override func mouseDown(with event: NSEvent) { onEdit?() }
 
+    /// Nhóm hiển thị: nhóm 0 là đoạn đầu; nhóm i (i ≥ 1) gồm mũi tên › và đoạn thứ i.
+    private var groups: [[NSView]] = []
+    private var leadingViews: [NSView] = []
+    private var trailingViews: [NSView] = []
+    private let overflowChev = FlatButton(title: "", symbol: nil, target: nil, action: nil)
+    /// Các đoạn giữa đang bị rút gọn vào nút "…".
+    private var hiddenGroups: Set<Int> = []
+
+    private func chevron(tag: Int) -> FlatButton {
+        let chev = FlatButton(title: "", symbol: nil, target: self, action: #selector(showChildren(_:)))
+        chev.tag = tag
+        chev.fixedHeight.constant = 24
+        chev.horizontalPadding = 2
+        chev.image = Theme.symbol("chevron.right", size: 10)
+        chev.imagePosition = .imageOnly
+        chev.toolTip = L10n.t("subfolders")
+        return chev
+    }
+
     func show(_ list: [Crumb]) {
         crumbs = list
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        stack.addArrangedSubview(overflow)
-        stack.setVisibilityPriority(.notVisible, for: overflow)
+        groups = []; leadingViews = []; trailingViews = []; hiddenGroups = []
         let rootSymbol = list.first?.path == SpecialLocation.home ? "house" : "folder.fill"
         let icon = NSImageView(image: FileIcons.small(rootSymbol, size: 16) ?? Theme.symbol(rootSymbol) ?? NSImage())
         icon.contentTintColor = list.first?.path == SpecialLocation.home ? Theme.text : NSColor(srgbRed: 0.91, green: 0.69, blue: 0.16, alpha: 1)
+        icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
         stack.addArrangedSubview(icon)
         stack.setCustomSpacing(4, after: icon)
+        leadingViews = [icon]
         for (i, c) in list.enumerated() {
-            let chev = FlatButton(title: "", symbol: "chevron.right", target: self, action: #selector(showChildren(_:)))
-            chev.tag = i - 1
-            chev.fixedHeight.constant = 24
-            chev.toolTip = L10n.t("subfolders")
-            if i > 0 { stack.addArrangedSubview(chev) }
+            var g: [NSView] = []
+            if i > 0 { g.append(chevron(tag: i - 1)) }
             let b = FlatButton(title: c.title, symbol: nil, target: self, action: #selector(crumbClicked(_:)))
             b.tag = i
             b.fixedHeight.constant = 24
+            b.horizontalPadding = 8
+            // Quá hẹp đến mức không đủ chỗ cho đoạn đầu và đoạn cuối thì đoạn đầu co lại trước.
+            let isLast = i == list.count - 1
+            b.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(isLast ? 400 : 300), for: .horizontal)
             b.toolTip = SpecialLocation.isSpecial(c.path) ? c.title : c.path
             b.lineBreakMode = .byTruncatingTail
-            stack.addArrangedSubview(b)
-            // Thiếu chỗ thì ẩn bớt các đoạn đầu trước, giữ đoạn cuối (như Windows).
-            let pr = NSStackView.VisibilityPriority(rawValue: Float(400 + i * 40))
-            stack.setVisibilityPriority(i == list.count - 1 ? .mustHold : pr, for: b)
-            if i > 0 { stack.setVisibilityPriority(i == list.count - 1 ? .mustHold : pr, for: chev) }
+            g.append(b)
+            groups.append(g)
+            if i == 0 {
+                g.forEach { stack.addArrangedSubview($0) }
+                // Nút "…" (các thư mục giữa bị rút gọn) đứng ngay sau thư mục đầu, như Windows.
+                overflowChev.image = Theme.symbol("chevron.right", size: 10)
+                overflowChev.imagePosition = .imageOnly
+                overflowChev.horizontalPadding = 2
+                overflowChev.fixedHeight.constant = 24
+                overflowChev.isEnabled = false
+                stack.addArrangedSubview(overflowChev)
+                stack.addArrangedSubview(overflow)
+                overflowChev.isHidden = true
+                overflow.isHidden = true
+            } else {
+                g.forEach { stack.addArrangedSubview($0) }
+            }
         }
         // Mũi tên cuối: thư mục con của thư mục đang mở.
         if let last = list.last, !SpecialLocation.isSpecial(last.path) || last.path == SpecialLocation.thisMac {
-            let chev = FlatButton(title: "", symbol: "chevron.right", target: self, action: #selector(showChildren(_:)))
-            chev.tag = list.count - 1
-            chev.fixedHeight.constant = 24
+            let chev = chevron(tag: list.count - 1)
             stack.addArrangedSubview(chev)
-            stack.setVisibilityPriority(.mustHold, for: chev)
+            trailingViews = [chev]
         }
         needsLayout = true
-        DispatchQueue.main.async { self.updateOverflow() }
     }
 
+    private func width(_ views: [NSView]) -> CGFloat {
+        views.reduce(0) { $0 + max($1.intrinsicContentSize.width, 0) }
+    }
+
+    /// Thiếu chỗ: giữ đủ thư mục đầu và thư mục cuối, rút gọn các thư mục ở giữa (gần đầu trước) vào nút "…".
     override func layout() {
         super.layout()
-        updateOverflow()
-    }
-
-    private func updateOverflow() {
-        let hidden = stack.detachedViews.contains { $0 !== overflow }
-        let want: NSStackView.VisibilityPriority = hidden ? .mustHold : .notVisible
-        if stack.visibilityPriority(for: overflow) != want { stack.setVisibilityPriority(want, for: overflow) }
+        guard !groups.isEmpty else { return }
+        let avail = bounds.width - 4 - 4 - 26 - 2
+        let fixed = width(leadingViews) + 4 + width(groups[0]) + width(trailingViews) + (groups.count > 1 ? width(groups[groups.count - 1]) : 0)
+        var total = fixed + groups.dropFirst().dropLast().reduce(0) { $0 + width($1) }
+        var hide: Set<Int> = []
+        if total > avail, groups.count > 2 {
+            total += width([overflowChev, overflow])
+            for i in 1..<(groups.count - 1) where total > avail {
+                hide.insert(i)
+                total -= width(groups[i])
+            }
+        }
+        guard hide != hiddenGroups || overflow.isHidden != hide.isEmpty else { return }
+        hiddenGroups = hide
+        for (i, g) in groups.enumerated() { g.forEach { $0.isHidden = hide.contains(i) } }
+        overflow.isHidden = hide.isEmpty
+        overflowChev.isHidden = hide.isEmpty
+        overflow.toolTip = hide.sorted().map { crumbs[$0].title }.joined(separator: " › ")
     }
 
     @objc private func crumbClicked(_ b: NSButton) {
@@ -139,7 +189,7 @@ final class BreadcrumbBar: NSView {
 
     @objc private func showOverflow(_ b: NSButton) {
         let m = NSMenu()
-        for c in crumbs.dropLast() {
+        for c in hiddenGroups.sorted().map({ crumbs[$0] }) {
             let it = NSMenuItem(title: c.title, action: #selector(menuGo(_:)), keyEquivalent: "")
             it.target = self
             it.representedObject = c.path

@@ -5,15 +5,24 @@ import MfileCore
 /// Ngăn bên phải: Chi tiết (Option+Shift+P) hoặc Xem trước (Option+P), như Alt+Shift+P / Alt+P của Windows (FR-07).
 enum SidePaneKind: String { case none, details, preview, help }
 
+/// Khung ngăn bên phải: báo cho bộ điều khiển mỗi khi đổi bề rộng để chữ xuống dòng theo bề rộng mới.
+final class SidePaneView: ColorView {
+    var onLayout: (() -> Void)?
+    override func layout() {
+        super.layout()
+        onLayout?()
+    }
+}
+
 final class SidePaneController {
-    let view = ColorView(Theme.chrome)
+    let view = SidePaneView(Theme.chrome)
     private(set) var kind: SidePaneKind = .none
     private let stack = NSStackView()
     private let icon = NSImageView()
-    private let title = label("", size: 15)
-    private let subtitle = label("", color: Theme.secondaryText)
+    private let title = paneLabel("", size: 15)
+    private let subtitle = paneLabel("", color: Theme.secondaryText)
     private let rows = NSStackView()
-    private let placeholder = label("", color: Theme.secondaryText)
+    private let placeholder = paneLabel("", color: Theme.secondaryText)
     private var preview: QLPreviewView?
     private var current: [FileItem] = []
     private var folderPath = ""
@@ -29,8 +38,12 @@ final class SidePaneController {
         rows.spacing = 6
         icon.imageScaling = .scaleProportionallyUpOrDown
         icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.widthAnchor.constraint(equalToConstant: 96).isActive = true
-        icon.heightAnchor.constraint(equalToConstant: 96).isActive = true
+        // Ảnh thu nhỏ 96 pt, ngăn hẹp (tới khoảng 2 cm) thì co theo bề rộng ngăn.
+        let iw = icon.widthAnchor.constraint(equalToConstant: 96)
+        iw.priority = NSLayoutConstraint.Priority(700)
+        iw.isActive = true
+        icon.widthAnchor.constraint(lessThanOrEqualToConstant: 96).isActive = true
+        icon.heightAnchor.constraint(equalTo: icon.widthAnchor).isActive = true
         title.font = Theme.font(15, weight: .semibold)
         title.maximumNumberOfLines = 3
         title.lineBreakMode = .byWordWrapping
@@ -39,17 +52,27 @@ final class SidePaneController {
         placeholder.lineBreakMode = .byWordWrapping
         for v in [icon, title, subtitle, rows] as [NSView] { stack.addArrangedSubview(v) }
         stack.setCustomSpacing(16, after: subtitle)
-        view.pin(stack, insets: .init(top: 16, left: 16, bottom: 16, right: 16))
+        view.pin(stack, insets: .init(top: 16, left: 10, bottom: 16, right: 10))
+        icon.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true
+        // Chữ luôn trải đúng bề rộng ngăn (dài thì xuống dòng hoặc rút gọn "…"), không tự co thành cột hẹp.
+        for v in [title, subtitle, rows] as [NSView] { v.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+        stack.setClippingResistancePriority(NSLayoutConstraint.Priority(200), for: .horizontal)
         view.addSubview(placeholder)
         NSLayoutConstraint.activate([
             placeholder.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             placeholder.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             placeholder.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
         ])
-        for v in [title, subtitle] { v.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true }
         view.isHidden = true
+        view.onLayout = { [weak self] in self?.updateWrapWidth() }
         view.pin(help)
         help.isHidden = true
+    }
+
+    /// Tên dài xuống dòng theo bề rộng ngăn hiện tại.
+    private func updateWrapWidth() {
+        let w = max(stack.bounds.width, 1)
+        if abs(title.preferredMaxLayoutWidth - w) > 0.5 { title.preferredMaxLayoutWidth = w }
     }
 
     func show(_ k: SidePaneKind) {
@@ -109,8 +132,20 @@ final class SidePaneController {
             return
         }
         let path = current.first?.path ?? folderPath
+        // Trang chủ, Máy Mac này: hiện tên trang, không phải đường dẫn nội bộ "mfile:…".
+        if current.isEmpty, SpecialLocation.isSpecial(path) {
+            icon.image = FileIcons.icon(for: path)
+            title.stringValue = SpecialLocation.title(path) ?? ""
+            subtitle.stringValue = ""
+            return
+        }
         let attrs = (try? fm.attributesOfItem(atPath: path)) ?? [:]
         icon.image = FileIcons.icon(for: path)
+        // Ảnh, video, PDF, tài liệu: hiện ảnh thu nhỏ thật như ngăn chi tiết của Windows.
+        Thumbnails.load(path, size: 256) { [weak self] img in
+            guard let self, (self.current.first?.path ?? self.folderPath) == path else { return }
+            self.icon.image = img
+        }
         let item = current.first
         title.stringValue = item?.name ?? (folderPath as NSString).lastPathComponent
         subtitle.stringValue = item?.typeDescription() ?? L10n.t("typeFolder")
@@ -125,8 +160,8 @@ final class SidePaneController {
     }
 
     private func addRow(_ key: String, _ value: String) {
-        let k = label(L10n.t(key), size: 11, color: Theme.secondaryText)
-        let v = label(value)
+        let k = paneLabel(L10n.t(key), size: 11, color: Theme.secondaryText)
+        let v = paneLabel(value)
         v.lineBreakMode = .byTruncatingMiddle
         v.toolTip = value
         let col = NSStackView(views: [k, v])
@@ -134,6 +169,10 @@ final class SidePaneController {
         col.alignment = .leading
         col.spacing = 1
         rows.addArrangedSubview(col)
-        v.widthAnchor.constraint(lessThanOrEqualToConstant: 260).isActive = true
+        NSLayoutConstraint.activate([
+            col.widthAnchor.constraint(equalTo: rows.widthAnchor),
+            k.widthAnchor.constraint(equalTo: col.widthAnchor),
+            v.widthAnchor.constraint(equalTo: col.widthAnchor),
+        ])
     }
 }

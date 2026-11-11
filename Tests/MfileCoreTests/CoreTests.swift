@@ -379,3 +379,143 @@ final class RecursiveSearchTests: XCTestCase {
         XCTAssertFalse(RecursiveSearch.matches("abc", ""))
     }
 }
+
+final class CloudStatusTests: XCTestCase {
+    func testStatus() {
+        let nd = URLUbiquitousItemDownloadingStatus.notDownloaded.rawValue
+        let cur = URLUbiquitousItemDownloadingStatus.current.rawValue
+        XCTAssertEqual(CloudStatus.from(downloading: nd, isDownloading: false, isUploading: false, isUploaded: true, hasError: false), .onlineOnly)
+        XCTAssertEqual(CloudStatus.from(downloading: cur, isDownloading: false, isUploading: false, isUploaded: true, hasError: false), .local)
+        XCTAssertEqual(CloudStatus.from(downloading: cur, isDownloading: false, isUploading: true, isUploaded: false, hasError: false), .syncing)
+        XCTAssertEqual(CloudStatus.from(downloading: nd, isDownloading: false, isUploading: false, isUploaded: true, hasError: true), .error)
+        XCTAssertTrue(CloudStatus.isCloudPath("/Users/a/Library/CloudStorage/OneDrive-Personal/x", home: "/Users/a"))
+        XCTAssertFalse(CloudStatus.isCloudPath("/Users/a/Documents", home: "/Users/a"))
+    }
+}
+
+final class OfficeMetadataTests: XCTestCase {
+    let core = """
+    <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    <cp:coreProperties xmlns:cp="x" xmlns:dc="y" xmlns:dcterms="z"><dc:title>Báo cáo &amp; dự toán</dc:title><dc:creator>Nguyễn Văn A</dc:creator><cp:lastModifiedBy>Trần B</cp:lastModifiedBy><cp:revision>7</cp:revision><cp:lastPrinted>2026-10-01T00:00:00Z</cp:lastPrinted><dcterms:created xsi:type="dcterms:W3CDTF">2026-10-29T08:40:00Z</dcterms:created></cp:coreProperties>
+    """
+    let app = "<Properties xmlns=\"a\"><Template>Normal.dotm</Template><TotalTime>95</TotalTime><Application>Microsoft Office Word</Application><Company>ITD</Company></Properties>"
+
+    func testReadAndSet() {
+        XCTAssertEqual(OfficeMetadata.value(of: "dc:title", in: core), "Báo cáo & dự toán")
+        XCTAssertEqual(OfficeMetadata.value(of: "dcterms:created", in: core), "2026-10-29T08:40:00Z")
+        XCTAssertNil(OfficeMetadata.value(of: "dc:subject", in: core))
+        let x = OfficeMetadata.setting("dc:subject", to: "Hồ sơ <mời>", in: core, rootClose: "</cp:coreProperties>")
+        XCTAssertEqual(OfficeMetadata.value(of: "dc:subject", in: x), "Hồ sơ <mời>")
+        XCTAssertTrue(x.contains("&lt;mời&gt;"))
+        let y = OfficeMetadata.setting("dc:creator", to: "Lê C", in: core, rootClose: "</cp:coreProperties>")
+        XCTAssertEqual(OfficeMetadata.value(of: "dc:creator", in: y), "Lê C")
+    }
+
+    func testClean() {
+        let c = OfficeMetadata.cleaned(core, part: .core)
+        XCTAssertEqual(OfficeMetadata.value(of: "dc:creator", in: c), "")
+        XCTAssertEqual(OfficeMetadata.value(of: "cp:lastModifiedBy", in: c), "")
+        XCTAssertEqual(OfficeMetadata.value(of: "dc:title", in: c), "")
+        XCTAssertNil(OfficeMetadata.value(of: "cp:lastPrinted", in: c))
+        XCTAssertEqual(OfficeMetadata.value(of: "cp:revision", in: c), "1")
+        XCTAssertEqual(OfficeMetadata.value(of: "dcterms:created", in: c), "2026-10-29T08:40:00Z")
+        let a = OfficeMetadata.cleaned(app, part: .app)
+        XCTAssertEqual(OfficeMetadata.value(of: "Company", in: a), "")
+        XCTAssertEqual(OfficeMetadata.value(of: "Template", in: a), "")
+        XCTAssertEqual(OfficeMetadata.value(of: "TotalTime", in: a), "0")
+        XCTAssertEqual(OfficeMetadata.value(of: "Application", in: a), "Microsoft Office Word")
+        XCTAssertEqual(OfficeMetadata.cleanedCustom("<?xml?><Properties xmlns=\"q\"><property name=\"Khách\"><vt:lpwstr>X</vt:lpwstr></property></Properties>"), "<?xml?><Properties xmlns=\"q\"></Properties>")
+    }
+
+    func testDeepCleanWord() {
+        let n = OfficeMetadata.anonymousName
+        let doc = "<w:body><w:ins w:id=\"1\" w:author=\"Nguyễn Văn A\" w:date=\"2026-10-29T08:40:00Z\"><w:r/></w:ins><w:del w:author=\"Trần B\" w:date=\"2026-10-30T09:00:00Z\"/></w:body>"
+        let d = OfficeMetadata.deepCleaned(doc, part: "word/document.xml")
+        XCTAssertFalse(d.contains("Nguyễn"))
+        XCTAssertFalse(d.contains("Trần"))
+        XCTAssertFalse(d.contains("w:date="))
+        XCTAssertTrue(d.contains("w:author=\"\(n)\""))
+        let com = "<w:comments><w:comment w:id=\"0\" w:author=\"Lê C\" w:date=\"2026-10-29T08:40:00Z\" w:initials=\"LC\"><w:p/></w:comment></w:comments>"
+        let c = OfficeMetadata.deepCleaned(com, part: "word/comments.xml")
+        XCTAssertFalse(c.contains("Lê C"))
+        XCTAssertTrue(c.contains("w:initials=\"\(OfficeMetadata.anonymousInitials)\""))
+        let people = "<w15:people><w15:person w15:author=\"Lê C\"><w15:presenceInfo w15:providerId=\"AD\" w15:userId=\"S::le.c@example.com::1\"/></w15:person></w15:people>"
+        let p = OfficeMetadata.deepCleaned(people, part: "word/people.xml")
+        XCTAssertFalse(p.contains("example.com"))
+        XCTAssertFalse(p.contains("Lê C"))
+        let settings = "<w:settings xmlns:w=\"x\"><w:zoom w:percent=\"100\"/><w:proofState w:spelling=\"clean\"/></w:settings>"
+        let st = OfficeMetadata.deepCleaned(settings, part: "word/settings.xml")
+        XCTAssertTrue(st.contains("<w:zoom w:percent=\"100\"/><w:removePersonalInformation/><w:removeDateAndTime/><w:proofState"))
+        XCTAssertEqual(OfficeMetadata.deepCleaned(st, part: "word/settings.xml"), st)
+    }
+
+    func testDeepCleanExcelAndPowerPoint() {
+        let n = OfficeMetadata.anonymousName
+        let xc = "<comments><authors><author>Nguyễn Văn A</author><author>tc={1A2B}</author></authors></comments>"
+        let x = OfficeMetadata.deepCleaned(xc, part: "xl/comments1.xml")
+        XCTAssertTrue(x.contains("<author>\(n)</author>"))
+        XCTAssertTrue(x.contains("<author>tc={1A2B}</author>"))
+        let persons = "<personList><person displayName=\"Lê C\" id=\"{9}\" userId=\"le.c@example.com\" providerId=\"AD\"/></personList>"
+        let ps = OfficeMetadata.deepCleaned(persons, part: "xl/persons/person.xml")
+        XCTAssertFalse(ps.contains("Lê C") || ps.contains("example.com"))
+        XCTAssertTrue(ps.contains("id=\"{9}\""))
+        let wb = OfficeMetadata.deepCleaned("<workbook><workbookPr defaultThemeVersion=\"1\"/></workbook>", part: "xl/workbook.xml")
+        XCTAssertTrue(wb.contains("<workbookPr filterPrivacy=\"1\" defaultThemeVersion"))
+        let pa = "<p:cmAuthorLst><p:cmAuthor id=\"0\" name=\"Trần B\" initials=\"TB\" lastIdx=\"2\" clrIdx=\"0\"/></p:cmAuthorLst>"
+        let pc = OfficeMetadata.deepCleaned(pa, part: "ppt/commentAuthors.xml")
+        XCTAssertFalse(pc.contains("Trần B"))
+        XCTAssertTrue(pc.contains("lastIdx=\"2\""))
+        let pres = OfficeMetadata.deepCleaned("<p:presentation xmlns:p=\"x\" saveSubsetFonts=\"1\"><p:sldIdLst/></p:presentation>", part: "ppt/presentation.xml")
+        XCTAssertTrue(pres.hasPrefix("<p:presentation removePersonalInfoOnSave=\"1\" xmlns:p"))
+        // Tệp ngoài phạm vi không bị đụng tới.
+        XCTAssertEqual(OfficeMetadata.deepCleaned(pa, part: "ppt/slides/slide1.xml"), pa)
+    }
+
+    #if os(macOS)
+    func testFileRoundTrip() throws {
+        let fm = FileManager.default
+        let dir = NSTemporaryDirectory() + "office-test-" + UUID().uuidString
+        try fm.createDirectory(atPath: dir + "/docProps", withIntermediateDirectories: true)
+        try "<Types/>".write(toFile: dir + "/[Content_Types].xml", atomically: true, encoding: .utf8)
+        try core.write(toFile: dir + "/docProps/core.xml", atomically: true, encoding: .utf8)
+        try app.write(toFile: dir + "/docProps/app.xml", atomically: true, encoding: .utf8)
+        try fm.createDirectory(atPath: dir + "/word", withIntermediateDirectories: true)
+        try "<w:comments><w:comment w:id=\"0\" w:author=\"Lê C\" w:date=\"2026-10-29T08:40:00Z\" w:initials=\"LC\"/></w:comments>".write(toFile: dir + "/word/comments.xml", atomically: true, encoding: .utf8)
+        let doc = dir + "/Hồ sơ.docx"
+        XCTAssertTrue(ArchiveTool.run("/usr/bin/zip", ["-X", "-r", "-q", "-nw", doc, "[Content_Types].xml", "docProps", "word"], cwd: dir).0)
+        XCTAssertEqual(OfficeMetadata.read(doc)["creator"], "Nguyễn Văn A")
+        XCTAssertEqual(OfficeMetadata.read(doc)["company"], "ITD")
+        try OfficeMetadata.write(doc, ["subject": "Dự thầu", "company": "Công ty ITD"])
+        XCTAssertEqual(OfficeMetadata.read(doc)["subject"], "Dự thầu")
+        XCTAssertEqual(OfficeMetadata.read(doc)["company"], "Công ty ITD")
+        XCTAssertTrue(MetadataCleaner.canClean(doc))
+        let copy = dir + "/Hồ sơ - Bản sao.docx"
+        try MetadataCleaner.clean(doc, to: copy)
+        XCTAssertEqual(OfficeMetadata.read(copy)["creator"], "")
+        XCTAssertEqual(OfficeMetadata.read(doc)["creator"], "Nguyễn Văn A")
+        try MetadataCleaner.cleanInPlace(doc)
+        XCTAssertEqual(OfficeMetadata.read(doc)["lastModifiedBy"], "")
+        let out = dir + "/out"
+        XCTAssertTrue(ArchiveTool.run("/usr/bin/unzip", ["-q", doc, "-d", out]).0)
+        let comments = try String(contentsOfFile: out + "/word/comments.xml", encoding: .utf8)
+        XCTAssertFalse(comments.contains("Lê C"))
+        XCTAssertFalse(comments.contains("w:date="))
+        try? fm.removeItem(atPath: dir)
+    }
+    #endif
+}
+
+final class CloudProviderTests: XCTestCase {
+    func testProviders() {
+        let h = "/Users/a"
+        XCTAssertEqual(CloudProvider.of(h + "/Library/CloudStorage/OneDrive-Personal/Soan thao/x.docx", home: h)?.kind, .oneDrive)
+        let biz = CloudProvider.of(h + "/Library/CloudStorage/OneDrive-ITD/Hồ sơ", home: h)
+        XCTAssertEqual(biz?.kind, .oneDriveBusiness)
+        XCTAssertEqual(biz?.name, "OneDrive - ITD")
+        XCTAssertEqual(CloudProvider.of(h + "/Library/CloudStorage/GoogleDrive-a@gmail.com/My Drive", home: h)?.name, "Google Drive")
+        XCTAssertEqual(CloudProvider.of(h + "/Library/Mobile Documents/com~apple~CloudDocs/Ảnh", home: h)?.kind, .iCloud)
+        XCTAssertNil(CloudProvider.of(h + "/Documents", home: h))
+        let db = CloudProvider.of(h + "/Library/CloudStorage/Dropbox/Hồ sơ dự thầu", home: h)!
+        XCTAssertEqual(db.webURL(for: h + "/Library/CloudStorage/Dropbox/Hồ sơ dự thầu")?.absoluteString, "https://www.dropbox.com/home/H%E1%BB%93%20s%C6%A1%20d%E1%BB%B1%20th%E1%BA%A7u")
+    }
+}
