@@ -19,6 +19,7 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
     var entries: [Entry] = []
     var onSelect: ((String) -> Void)?
     var onOpenNewWindow: ((String) -> Void)?
+    var onOpenNewTab: ((String) -> Void)?
     private var suppressSelect = false
     private let dragType = NSPasteboard.PasteboardType("vn.macmfile.pin-row")
 
@@ -211,6 +212,7 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
             menu.addItem(it)
         }
         add("open", #selector(menuOpen(_:)))
+        add("openNewTab", #selector(menuNewTab(_:)))
         add("openNewWindow", #selector(menuNewWindow(_:)))
         menu.addItem(.separator())
         if entries[row].isPin { add("unpinQuick", #selector(menuUnpin(_:))) } else { add("pinQuick", #selector(menuPin(_:))) }
@@ -218,6 +220,7 @@ final class SidebarController: NSObject, NSTableViewDataSource, NSTableViewDeleg
     }
 
     @objc func menuOpen(_ s: NSMenuItem) { if let p = s.representedObject as? String { onSelect?(p) } }
+    @objc func menuNewTab(_ s: NSMenuItem) { if let p = s.representedObject as? String { onOpenNewTab?(p) } }
     @objc func menuNewWindow(_ s: NSMenuItem) { if let p = s.representedObject as? String { onOpenNewWindow?(p) } }
     @objc func menuUnpin(_ s: NSMenuItem) { if let p = s.representedObject as? String { Pins.unpin(p) } }
     @objc func menuPin(_ s: NSMenuItem) { if let p = s.representedObject as? String { Pins.pin(p) } }

@@ -2,15 +2,19 @@ import AppKit
 import MfileCore
 
 /// Cửa sổ chính theo bố cục Windows 11: thanh tab trên cùng, nút − ☐ ✕ ở góc phải (Mục 4).
+/// Mỗi tab là một BrowserViewController riêng (FR-02).
 final class MainWindowController: NSWindowController, NSWindowDelegate {
-    let browser: BrowserViewController
-    private var tabTitle: NSTextField!
-    private var tabIcon: NSImageView!
+    private(set) var tabs: [BrowserViewController] = []
+    private(set) var activeIndex = 0
+    var browser: BrowserViewController { tabs[activeIndex] }
+    var tabPaths: [String] { tabs.map(\.currentPath) }
+
+    private let container = NSView()
+    private let tabStack = NSStackView()
     private var restoreFrame: NSRect?
     private var snappedSide: Int = 0 // -1 trái, 1 phải
 
-    init(startPath: String) {
-        browser = BrowserViewController(startPath: startPath)
+    init(paths: [String]) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -27,14 +31,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
         buildContent()
-        browser.onLocationChange = { [weak self] title, path in
-            self?.tabTitle.stringValue = title
-            self?.tabIcon.image = NSWorkspace.shared.icon(forFile: path)
-            self?.window?.title = title
-        }
-        browser.reloadTitle()
+        for p in (paths.isEmpty ? [NSHomeDirectory()] : paths) { addTab(path: p, activate: false) }
+        selectTab(0)
         window.center()
     }
+
+    convenience init(startPath: String) { self.init(paths: [startPath]) }
 
     required init?(coder: NSCoder) { fatalError() }
 
@@ -44,61 +46,109 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let strip = DragView(Theme.tabStrip)
         root.addSubview(strip)
 
-        // Tab đang mở
-        let tab = ColorView(Theme.chrome)
-        tab.wantsLayer = true
-        tab.layer?.cornerRadius = 8
-        tab.layer?.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-        tabIcon = NSImageView()
-        tabIcon.translatesAutoresizingMaskIntoConstraints = false
-        tabTitle = label("")
-        let tabClose = FlatButton(title: "", symbol: "xmark", target: window, action: #selector(NSWindow.performClose(_:)))
-        let tabStack = NSStackView(views: [tabIcon, tabTitle, tabClose])
-        tabStack.spacing = 8
+        tabStack.orientation = .horizontal
+        tabStack.spacing = 2
+        tabStack.alignment = .bottom
         tabStack.translatesAutoresizingMaskIntoConstraints = false
-        tab.addSubview(tabStack)
-        strip.addSubview(tab)
-        let plus = FlatButton(title: "", symbol: "plus", target: nil, action: #selector(AppDelegate.newWindow(_:)))
+        strip.addSubview(tabStack)
+        let plus = FlatButton(title: "", symbol: "plus", target: self, action: #selector(newTab(_:)))
+        plus.toolTip = L10n.t("newTab") + " (Cmd+T)"
         strip.addSubview(plus)
 
         // − ☐ ✕ kiểu Windows
-        let minB = WindowButton(kind: .minimize)
-        let maxB = WindowButton(kind: .maximize)
-        let closeB = WindowButton(kind: .close)
-        let winButtons = NSStackView(views: [minB, maxB, closeB])
+        let winButtons = NSStackView(views: [WindowButton(kind: .minimize), WindowButton(kind: .maximize), WindowButton(kind: .close)])
         winButtons.spacing = 0
         winButtons.translatesAutoresizingMaskIntoConstraints = false
         strip.addSubview(winButtons)
 
-        let content = browser.view
-        content.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(content)
+        container.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(container)
 
         NSLayoutConstraint.activate([
             strip.topAnchor.constraint(equalTo: root.topAnchor),
             strip.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             strip.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             strip.heightAnchor.constraint(equalToConstant: 40),
-            tab.leadingAnchor.constraint(equalTo: strip.leadingAnchor, constant: 8),
-            tab.bottomAnchor.constraint(equalTo: strip.bottomAnchor),
-            tab.heightAnchor.constraint(equalToConstant: 34),
-            tab.widthAnchor.constraint(greaterThanOrEqualToConstant: 220),
-            tabStack.leadingAnchor.constraint(equalTo: tab.leadingAnchor, constant: 12),
-            tabStack.trailingAnchor.constraint(equalTo: tab.trailingAnchor, constant: -4),
-            tabStack.centerYAnchor.constraint(equalTo: tab.centerYAnchor),
-            tabIcon.widthAnchor.constraint(equalToConstant: 16),
-            tabIcon.heightAnchor.constraint(equalToConstant: 16),
-            plus.leadingAnchor.constraint(equalTo: tab.trailingAnchor, constant: 4),
-            plus.centerYAnchor.constraint(equalTo: tab.centerYAnchor),
+            tabStack.leadingAnchor.constraint(equalTo: strip.leadingAnchor, constant: 8),
+            tabStack.bottomAnchor.constraint(equalTo: strip.bottomAnchor),
+            tabStack.heightAnchor.constraint(equalToConstant: 34),
+            plus.leadingAnchor.constraint(equalTo: tabStack.trailingAnchor, constant: 4),
+            plus.centerYAnchor.constraint(equalTo: tabStack.centerYAnchor),
+            plus.widthAnchor.constraint(equalToConstant: 32),
+            plus.trailingAnchor.constraint(lessThanOrEqualTo: winButtons.leadingAnchor, constant: -8),
             winButtons.topAnchor.constraint(equalTo: strip.topAnchor),
             winButtons.trailingAnchor.constraint(equalTo: strip.trailingAnchor),
-            content.topAnchor.constraint(equalTo: strip.bottomAnchor),
-            content.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            content.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            container.topAnchor.constraint(equalTo: strip.bottomAnchor),
+            container.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            container.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
         window.contentView = root
-        window.makeFirstResponder(browser.table)
+        NotificationCenter.default.addObserver(self, selector: #selector(rebuildTabStrip), name: L10n.didChangeNotification, object: nil)
+    }
+
+    // MARK: Tab (FR-02)
+
+    @discardableResult
+    func addTab(path: String, activate: Bool = true, at index: Int? = nil) -> BrowserViewController {
+        let b = BrowserViewController(startPath: path)
+        b.onLocationChange = { [weak self] _, _ in self?.rebuildTabStrip() }
+        let i = min(index ?? tabs.count, tabs.count)
+        tabs.insert(b, at: i)
+        _ = b.view // nạp giao diện
+        if activate { selectTab(i) } else { rebuildTabStrip() }
+        return b
+    }
+
+    func selectTab(_ i: Int) {
+        guard tabs.indices.contains(i) else { return }
+        container.subviews.forEach { $0.removeFromSuperview() }
+        activeIndex = i
+        container.pin(browser.view)
+        rebuildTabStrip()
+        window?.title = browser.title ?? ""
+        window?.makeFirstResponder(browser.table)
+    }
+
+    func closeTab(at i: Int) {
+        guard tabs.indices.contains(i) else { return }
+        if tabs.count == 1 { window?.performClose(nil); return }
+        tabs.remove(at: i)
+        selectTab(min(activeIndex >= i ? max(activeIndex - 1, 0) : activeIndex, tabs.count - 1))
+    }
+
+    @objc func newTab(_ sender: Any?) { addTab(path: NSHomeDirectory()) }
+    @objc func closeCurrentTab(_ sender: Any?) { closeTab(at: activeIndex) }
+    @objc func nextTab(_ sender: Any?) { selectTab((activeIndex + 1) % tabs.count) }
+    @objc func previousTab(_ sender: Any?) { selectTab((activeIndex - 1 + tabs.count) % tabs.count) }
+    @objc func duplicateTab(_ sender: Any?) {
+        let i = (sender as? NSMenuItem)?.tag ?? activeIndex
+        addTab(path: tabs[i].currentPath, at: i + 1)
+    }
+    @objc func closeOtherTabs(_ sender: Any?) {
+        let i = (sender as? NSMenuItem)?.tag ?? activeIndex
+        let keep = tabs[i]
+        tabs = [keep]
+        selectTab(0)
+    }
+    @objc func closeTabFromMenu(_ sender: NSMenuItem) { closeTab(at: sender.tag) }
+    @objc func moveTabToNewWindow(_ sender: NSMenuItem) {
+        let i = sender.tag
+        guard tabs.count > 1 else { return }
+        let path = tabs[i].currentPath
+        closeTab(at: i)
+        (NSApp.delegate as? AppDelegate)?.openWindow(at: path)
+    }
+
+    @objc private func rebuildTabStrip() {
+        tabStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let width: CGFloat = tabs.count > 5 ? max(120, 1000 / CGFloat(tabs.count)) : 220
+        for (i, b) in tabs.enumerated() {
+            let t = TabItemView(controller: self, index: i, title: b.title ?? "", path: b.currentPath, active: i == activeIndex)
+            t.widthAnchor.constraint(equalToConstant: width).isActive = true
+            tabStack.addArrangedSubview(t)
+        }
+        if tabs.indices.contains(activeIndex) { window?.title = tabs[activeIndex].title ?? "" }
     }
 
     // MARK: Xếp cửa sổ nửa màn hình (FR-47, Mục 5.10)
@@ -232,5 +282,60 @@ final class WindowButton: NSButton {
             p.move(to: NSPoint(x: c.x + 5, y: c.y - 5)); p.line(to: NSPoint(x: c.x - 5, y: c.y + 5))
         }
         p.stroke()
+    }
+}
+
+/// Một tab trên thanh tiêu đề: biểu tượng, tên thư mục, nút ✕; nhấp chuột phải có Nhân bản tab, Đóng các tab khác.
+final class TabItemView: ColorView {
+    private weak var controller: MainWindowController?
+    private let index: Int
+
+    init(controller: MainWindowController, index: Int, title: String, path: String, active: Bool) {
+        self.controller = controller
+        self.index = index
+        super.init(active ? Theme.chrome : Theme.tabStrip)
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        heightAnchor.constraint(equalToConstant: 34).isActive = true
+        let icon = NSImageView(image: NSWorkspace.shared.icon(forFile: path))
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        let t = label(title)
+        t.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let close = FlatButton(title: "", symbol: "xmark", target: self, action: #selector(closeMe))
+        close.widthAnchor.constraint(equalToConstant: 26).isActive = true
+        close.toolTip = L10n.t("closeTab") + " (Cmd+W)"
+        let stack = NSStackView(views: [icon, t, NSView(), close])
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            icon.widthAnchor.constraint(equalToConstant: 16), icon.heightAnchor.constraint(equalToConstant: 16),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        toolTip = path
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func mouseDown(with event: NSEvent) { controller?.selectTab(index) }
+    override func otherMouseUp(with event: NSEvent) { controller?.closeTab(at: index) } // nhấp chuột giữa: đóng tab
+
+    @objc private func closeMe() { controller?.closeTab(at: index) }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let m = NSMenu()
+        for (key, sel) in [("duplicateTab", #selector(MainWindowController.duplicateTab(_:))),
+                           ("moveTabToNewWindow", #selector(MainWindowController.moveTabToNewWindow(_:))),
+                           ("closeOtherTabs", #selector(MainWindowController.closeOtherTabs(_:))),
+                           ("closeTab", #selector(MainWindowController.closeTabFromMenu(_:)))] {
+            let it = NSMenuItem(title: L10n.t(key), action: sel, keyEquivalent: "")
+            it.target = controller
+            it.tag = index
+            m.addItem(it)
+        }
+        return m
     }
 }

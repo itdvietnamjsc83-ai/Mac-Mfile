@@ -77,6 +77,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
         sidebar.onSelect = { [weak self] p in self?.navigate(to: p) }
         sidebar.onOpenNewWindow = { p in (NSApp.delegate as? AppDelegate)?.openWindow(at: p) }
+        sidebar.onOpenNewTab = { [weak self] p in (self?.view.window?.windowController as? MainWindowController)?.addTab(path: p) }
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: L10n.didChangeNotification, object: nil)
         reloadTexts()
         load()
@@ -295,6 +296,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         backB.isEnabled = history.canGoBack
         fwdB.isEnabled = history.canGoForward
         upB.isEnabled = NavigationHistory.parent(of: currentPath) != nil
+        self.title = title
         onLocationChange?(title, currentPath)
     }
 
@@ -565,6 +567,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             }
         }
         if let f = single, f.isDirectory {
+            add("openNewTab", #selector(openInNewTab(_:)))
             add("openNewWindow", #selector(openInNewWindow(_:)))
         }
         // Chia sẻ với ›: AirDrop, Mail, Tin nhắn… của macOS
@@ -612,6 +615,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         sub("showMoreOptions") { m in
             add("open", #selector(openSelected(_:)), "Enter", to: m)
             if let f = single, f.isDirectory {
+                add("openNewTab", #selector(openInNewTab(_:)), to: m)
                 add("openNewWindow", #selector(openInNewWindow(_:)), to: m)
             }
             if let f = single, !f.isDirectory {
@@ -669,6 +673,12 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             if it.isDirectory { (NSApp.delegate as? AppDelegate)?.openWindow(at: it.path) }
             else { NSWorkspace.shared.open(URL(fileURLWithPath: it.path)) }
         }
+    }
+
+    @objc func openInNewTab(_ sender: Any?) {
+        guard let wc = view.window?.windowController as? MainWindowController else { return }
+        let dirs = targetItems.filter(\.isDirectory)
+        for (n, it) in dirs.enumerated() { wc.addTab(path: it.path, activate: n == dirs.count - 1) }
     }
 
     @objc func openInNewWindow(_ sender: Any?) {

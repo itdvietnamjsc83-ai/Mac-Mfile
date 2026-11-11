@@ -12,7 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMainMenu()
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: L10n.didChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: Pins.didChange, object: nil)
-        openWindow(at: NSHomeDirectory())
+        restoreSession()
         NSApp.activate(ignoringOtherApps: true)
         if !UserDefaults.standard.bool(forKey: firstRunKey) {
             UserDefaults.standard.set(true, forKey: firstRunKey)
@@ -20,6 +20,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if UserDefaults.standard.object(forKey: hotKeyEnabledKey) as? Bool ?? true {
             registerHotKey()
         }
+    }
+
+    // MARK: Khôi phục phiên: mở lại các cửa sổ và tab lần trước (FR-02)
+
+    private let sessionKey = "MacMfile.session"
+
+    private func restoreSession() {
+        let saved = UserDefaults.standard.array(forKey: sessionKey) as? [[String]] ?? []
+        let fm = FileManager.default
+        let valid = saved.map { $0.filter { fm.fileExists(atPath: $0) } }.filter { !$0.isEmpty }
+        if valid.isEmpty { openWindow(at: NSHomeDirectory()); return }
+        for paths in valid { openWindow(paths: paths) }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        UserDefaults.standard.set(windows.map(\.tabPaths), forKey: sessionKey)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -31,8 +47,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     @discardableResult
-    func openWindow(at path: String) -> MainWindowController {
-        let wc = MainWindowController(startPath: path)
+    func openWindow(at path: String) -> MainWindowController { openWindow(paths: [path]) }
+
+    @discardableResult
+    func openWindow(paths: [String]) -> MainWindowController {
+        let wc = MainWindowController(paths: paths)
         if let last = windows.last?.window {
             wc.window?.setFrameTopLeftPoint(NSPoint(x: last.frame.minX + 24, y: last.frame.maxY - 24))
         }
@@ -147,12 +166,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         main.addItem(submenu("menuFile", [
             item("newWindow", #selector(newWindow(_:)), "n"),
+            item("newTab", #selector(MainWindowController.newTab(_:)), "t"),
             item("newFolderName", #selector(BrowserViewController.newFolder(_:)), "n", [.command, .shift]),
             item("open", #selector(BrowserViewController.openSelected(_:)), "o"),
             .separator(),
             item("properties", #selector(BrowserViewController.showInfo(_:)), "i"),
             .separator(),
-            item("closeWindow", #selector(NSWindow.performClose(_:)), "w"),
+            item("closeTab", #selector(MainWindowController.closeCurrentTab(_:)), "w"),
+            item("closeWindow", #selector(NSWindow.performClose(_:)), "w", [.command, .shift]),
         ]))
 
         main.addItem(submenu("menuEdit", [
@@ -195,6 +216,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         main.addItem(submenu("menuWindow", [
             item("minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
             item("maximize", #selector(NSWindow.performZoom(_:)), ""),
+            .separator(),
+            item("nextTab", #selector(MainWindowController.nextTab(_:)), "\t", [.control]),
+            item("previousTab", #selector(MainWindowController.previousTab(_:)), "\t", [.control, .shift]),
+            item("duplicateTab", #selector(MainWindowController.duplicateTab(_:)), ""),
             .separator(),
             item("snapLeft", #selector(MainWindowController.snapLeft(_:)), left),
             item("snapRight", #selector(MainWindowController.snapRight(_:)), right),
