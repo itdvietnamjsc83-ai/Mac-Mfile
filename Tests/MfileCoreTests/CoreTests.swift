@@ -147,3 +147,20 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(AppLanguage.systemDefault(preferred: ["en-US"]), .en)
     }
 }
+
+final class ArchiveTests: XCTestCase {
+    func testRecognize() {
+        XCTAssertTrue(ArchiveSupport.isArchive("Hồ sơ.ZIP"))
+        XCTAssertTrue(ArchiveSupport.isArchive("a.tar.gz"))
+        XCTAssertTrue(ArchiveSupport.isArchive("b.7z"))
+        XCTAssertFalse(ArchiveSupport.isArchive("Báo cáo.docx"))
+        XCTAssertFalse(ArchiveSupport.isArchive("zip"))
+    }
+
+    func testBaseName() {
+        XCTAssertEqual(ArchiveSupport.baseName(of: "Hồ sơ dự thầu.zip"), "Hồ sơ dự thầu")
+        XCTAssertEqual(ArchiveSupport.baseName(of: "data.tar.gz"), "data")
+        XCTAssertEqual(ArchiveSupport.baseName(of: "x.rar"), "x")
+        XCTAssertEqual(ArchiveSupport.baseName(of: "note.txt"), "note.txt")
+    }
+}

@@ -500,6 +500,18 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             add("openNewWindow", #selector(openInNewWindow(_:)))
             add("pinQuick", #selector(pinSelected(_:)), "Cmd+Shift+P")
         }
+        // Tệp nén: các lệnh giải nén giống Windows (Mục 5.3).
+        if target.count == 1, !target[0].isDirectory, ArchiveSupport.isArchive(target[0].name) {
+            menu.addItem(.separator())
+            add("extractAll", #selector(extractAll(_:)))
+            add("extractHere", #selector(extractHere(_:)))
+            let to = NSMenuItem(title: L10n.f("extractTo", ArchiveSupport.baseName(of: target[0].name)), action: #selector(extractToFolder(_:)), keyEquivalent: "")
+            to.target = self
+            menu.addItem(to)
+            add("testArchive", #selector(testArchive(_:)))
+        } else {
+            add("compressZip", #selector(compressToZip(_:)))
+        }
         menu.addItem(.separator())
         add("cut", #selector(cut(_:)), "Cmd+X")
         add("copy", #selector(copy(_:)), "Cmd+C")
@@ -690,6 +702,120 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
                 do { try FileManager.default.removeItem(atPath: it.path) } catch { self.showError(error.localizedDescription); break }
             }
             self.load()
+        }
+    }
+
+    // MARK: Nén và giải nén (dùng bsdtar/zip có sẵn trong macOS)
+
+    /// Chạy công cụ dòng lệnh ở nền, xong thì gọi lại trên luồng chính.
+    private func runTool(_ path: String, _ args: [String], cwd: String? = nil, done: @escaping (Bool, String) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: path)
+            p.arguments = args
+            if let cwd { p.currentDirectoryURL = URL(fileURLWithPath: cwd) }
+            let err = Pipe()
+            p.standardError = err
+            p.standardOutput = FileHandle.nullDevice
+            var ok = false
+            var message = ""
+            do {
+                try p.run()
+                p.waitUntilExit()
+                ok = p.terminationStatus == 0
+                message = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            } catch { message = error.localizedDescription }
+            DispatchQueue.main.async { done(ok, message.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        }
+    }
+
+    private var archiveTarget: FileItem? {
+        let t = targetItems
+        guard t.count == 1, !t[0].isDirectory, ArchiveSupport.isArchive(t[0].name) else { NSSound.beep(); return nil }
+        return t[0]
+    }
+
+    /// Giải nén vào thư mục đích; không ghi đè tệp đã có (-k).
+    private func extract(_ item: FileItem, into dest: String, createFolder: Bool) {
+        if createFolder {
+            do { try FileManager.default.createDirectory(atPath: dest, withIntermediateDirectories: true) }
+            catch { showError(error.localizedDescription); return }
+        }
+        showMessage(L10n.f("extracting", item.name))
+        runTool("/usr/bin/tar", ["-xkf", item.path, "-C", dest]) { [weak self] ok, msg in
+            guard let self else { return }
+            if ok {
+                self.showMessage(L10n.f("extracted", (dest as NSString).lastPathComponent))
+                if dest == self.currentPath { self.refresh(nil) } else if (dest as NSString).deletingLastPathComponent == self.currentPath { self.load(selecting: [dest]) }
+            } else {
+                self.showError(L10n.f("archiveBad", item.name) + (msg.isEmpty ? "" : "\n\n" + msg))
+                self.refresh(nil)
+            }
+        }
+    }
+
+    /// Giải nén tất cả…: chọn đích, mặc định là thư mục cùng tên tệp nén ở cạnh nó (giống Windows).
+    @objc func extractAll(_ sender: Any?) {
+        guard let item = archiveTarget, let window = view.window else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = URL(fileURLWithPath: currentPath)
+        panel.message = L10n.t("chooseDestination")
+        panel.prompt = L10n.t("extract")
+        panel.beginSheetModal(for: window) { [weak self] resp in
+            guard let self, resp == .OK, let url = panel.url else { return }
+            let dest = self.uniquePath(in: url.path, name: ArchiveSupport.baseName(of: item.name))
+            self.extract(item, into: dest, createFolder: true)
+        }
+    }
+
+    @objc func extractHere(_ sender: Any?) {
+        guard let item = archiveTarget else { return }
+        extract(item, into: (item.path as NSString).deletingLastPathComponent, createFolder: false)
+    }
+
+    @objc func extractToFolder(_ sender: Any?) {
+        guard let item = archiveTarget else { return }
+        let parent = (item.path as NSString).deletingLastPathComponent
+        extract(item, into: uniquePath(in: parent, name: ArchiveSupport.baseName(of: item.name)), createFolder: true)
+    }
+
+    @objc func testArchive(_ sender: Any?) {
+        guard let item = archiveTarget else { return }
+        let isZip = item.name.lowercased().hasSuffix(".zip")
+        let tool = isZip ? "/usr/bin/unzip" : "/usr/bin/tar"
+        let args = isZip ? ["-tq", item.path] : ["-tf", item.path]
+        runTool(tool, args) { [weak self] ok, msg in
+            guard let self else { return }
+            if ok {
+                let a = NSAlert()
+                a.messageText = L10n.f("archiveOK", item.name)
+                a.addButton(withTitle: L10n.t("ok"))
+                if let w = self.view.window { a.beginSheetModal(for: w) } else { a.runModal() }
+            } else {
+                self.showError(L10n.f("archiveBad", item.name) + (msg.isEmpty ? "" : "\n\n" + msg))
+            }
+        }
+    }
+
+    /// Nén thành tệp ZIP: tên tệp theo mục đầu tiên, đặt cạnh các mục đã chọn (giống Windows).
+    @objc func compressToZip(_ sender: Any?) {
+        let sel = targetItems
+        guard let first = sel.first else { NSSound.beep(); return }
+        let dir = (first.path as NSString).deletingLastPathComponent
+        let base = first.isDirectory ? first.name : (first.name as NSString).deletingPathExtension
+        let dest = uniquePath(in: dir, name: base + ".zip")
+        showMessage(L10n.f("compressing", sel.count))
+        runTool("/usr/bin/zip", ["-r", "-y", "-q", dest] + sel.map(\.name), cwd: dir) { [weak self] ok, msg in
+            guard let self else { return }
+            if ok {
+                self.showMessage(L10n.f("compressed", (dest as NSString).lastPathComponent))
+                self.load(selecting: [dest])
+            } else {
+                self.showError(msg)
+            }
         }
     }
 
