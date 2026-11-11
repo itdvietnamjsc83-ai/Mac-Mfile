@@ -142,7 +142,7 @@ public enum OfficeMetadata {
         // [Content_Types].xml đứng đầu gói như Office ghi.
         // Liệt kê tên tệp rõ ràng và tắt ký tự đại diện (-nw) vì "[Content_Types]" chứa dấu ngoặc vuông.
         var files: [String] = []
-        for case let rel as String in fm.enumerator(atPath: tmp) ?? NSDirectoryEnumerator() {
+        for rel in (fm.subpaths(atPath: tmp) ?? []) {
             var isDir: ObjCBool = false
             if fm.fileExists(atPath: tmp + "/" + rel, isDirectory: &isDir), !isDir.boolValue, rel != "[Content_Types].xml" { files.append(rel) }
         }
