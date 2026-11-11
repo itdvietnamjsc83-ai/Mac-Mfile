@@ -504,3 +504,18 @@ final class OfficeMetadataTests: XCTestCase {
     }
     #endif
 }
+
+final class CloudProviderTests: XCTestCase {
+    func testProviders() {
+        let h = "/Users/a"
+        XCTAssertEqual(CloudProvider.of(h + "/Library/CloudStorage/OneDrive-Personal/Soan thao/x.docx", home: h)?.kind, .oneDrive)
+        let biz = CloudProvider.of(h + "/Library/CloudStorage/OneDrive-ITD/Hồ sơ", home: h)
+        XCTAssertEqual(biz?.kind, .oneDriveBusiness)
+        XCTAssertEqual(biz?.name, "OneDrive - ITD")
+        XCTAssertEqual(CloudProvider.of(h + "/Library/CloudStorage/GoogleDrive-a@gmail.com/My Drive", home: h)?.name, "Google Drive")
+        XCTAssertEqual(CloudProvider.of(h + "/Library/Mobile Documents/com~apple~CloudDocs/Ảnh", home: h)?.kind, .iCloud)
+        XCTAssertNil(CloudProvider.of(h + "/Documents", home: h))
+        let db = CloudProvider.of(h + "/Library/CloudStorage/Dropbox/Hồ sơ dự thầu", home: h)!
+        XCTAssertEqual(db.webURL(for: h + "/Library/CloudStorage/Dropbox/Hồ sơ dự thầu")?.absoluteString, "https://www.dropbox.com/home/H%E1%BB%93%20s%C6%A1%20d%E1%BB%B1%20th%E1%BA%A7u")
+    }
+}

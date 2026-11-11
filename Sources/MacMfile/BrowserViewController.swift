@@ -954,6 +954,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
                 add("newTextFile", #selector(newTextFile(_:)), to: m)
             }
             menu.addItem(.separator())
+            addCloudItems(to: menu, paths: [currentPath], add: add)
             add("openInTerminal", #selector(openInTerminal(_:)))
             add("copyAddress", #selector(copyAddress(_:)))
             add("properties", #selector(showInfo(_:)), "Option+Enter")
@@ -1000,6 +1001,9 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             add("openNewTab", #selector(openInNewTab(_:)))
             add("openNewWindow", #selector(openInNewWindow(_:)))
         }
+        // Ổ đám mây (OneDrive, Google Drive, iCloud, Dropbox): nhóm lệnh như Windows / Finder.
+        menu.addItem(.separator())
+        addCloudItems(to: menu, paths: target.map(\.path), add: add)
         // Chia sẻ với ›: AirDrop, Mail, Tin nhắn… của macOS
         sub("shareWith") { m in
             let urls = target.map { URL(fileURLWithPath: $0.path) }
@@ -1244,6 +1248,145 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             let ext = (it.name as NSString).pathExtension
             let len = it.isDirectory || ext.isEmpty ? (it.name as NSString).length : (it.name as NSString).length - (ext as NSString).length - 1
             field.currentEditor()?.selectedRange = NSRange(location: 0, length: max(0, len))
+        }
+    }
+
+    // MARK: Ổ đám mây: Tải về máy, Giải phóng dung lượng, Chia sẻ, Sao chép liên kết, Xem trực tuyến
+
+    private var cloudTargets: [String] = []
+    private var cloudProvider: CloudProvider?
+
+    /// Thêm nhóm lệnh đám mây nếu mọi mục nằm cùng một ổ đám mây; thêm vạch ngăn ở cuối.
+    private func addCloudItems(to menu: NSMenu, paths: [String], add: (String, Selector?, String, NSMenu?, String?) -> NSMenuItem) {
+        guard let first = paths.first, let cloud = CloudProvider.of(first),
+              paths.allSatisfy({ CloudProvider.of($0)?.root == cloud.root }) else { return }
+        cloudTargets = paths
+        cloudProvider = cloud
+        let icon = Theme.symbol("cloud.fill", size: 14)
+        add("cloudKeep", #selector(cloudKeepOnDevice(_:)), "", nil, nil).image = icon
+        add("cloudFreeUp", #selector(cloudFreeUpSpace(_:)), "", nil, nil).image = icon
+        add("cloudShare", #selector(cloudShare(_:)), "", nil, nil).image = icon
+        if cloud.kind == .iCloud {
+            if paths.count == 1, !(DirectoryReader.item(at: first)?.isDirectory ?? true) {
+                add("cloudCopyLink", #selector(cloudCopyLink(_:)), "", nil, nil).image = icon
+            }
+        } else {
+            add("", #selector(cloudMoreInFinder(_:)), "", nil, L10n.f("cloudMoreInFinder", cloud.name)).image = icon
+        }
+        if cloud.webURL(for: first) != nil {
+            add("", #selector(cloudViewOnline(_:)), "", nil, L10n.f("cloudViewOnline", cloud.name)).image = icon
+        }
+        menu.addItem(.separator())
+    }
+
+    /// Các tệp bên trong (thư mục thì duyệt đệ quy, tối đa 20.000 tệp).
+    private static func cloudFiles(_ paths: [String]) -> [URL] {
+        let fm = FileManager.default
+        var out: [URL] = []
+        for p in paths {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: p, isDirectory: &isDir) else { continue }
+            if !isDir.boolValue { out.append(URL(fileURLWithPath: p)); continue }
+            for rel in fm.subpaths(atPath: p) ?? [] {
+                if out.count >= 20_000 { break }
+                let full = p + "/" + rel
+                var d: ObjCBool = false
+                if fm.fileExists(atPath: full, isDirectory: &d), !d.boolValue, !(rel as NSString).lastPathComponent.hasPrefix(".") {
+                    out.append(URL(fileURLWithPath: full))
+                }
+            }
+        }
+        return out
+    }
+
+    /// "Luôn giữ trên thiết bị này": tải toàn bộ về máy.
+    @objc func cloudKeepOnDevice(_ sender: Any?) {
+        let paths = cloudTargets
+        showMessage(L10n.t("cloudDownloadingStart"))
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let files = Self.cloudFiles(paths)
+            var failed = 0
+            for u in files where CloudStatus.of(u.path) == .onlineOnly {
+                do { try FileManager.default.startDownloadingUbiquitousItem(at: u) } catch { failed += 1 }
+            }
+            DispatchQueue.main.async {
+                self?.showMessage(failed == 0 ? L10n.t("cloudDownloading") : L10n.f("cloudSomeFailed", failed))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self?.refresh(nil) }
+            }
+        }
+    }
+
+    /// "Giải phóng dung lượng": xóa bản trên máy, chỉ giữ trên đám mây (tệp đang đồng bộ thì bỏ qua).
+    @objc func cloudFreeUpSpace(_ sender: Any?) {
+        let paths = cloudTargets
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let files = Self.cloudFiles(paths)
+            var freed = 0, failed = 0
+            for u in files {
+                guard let st = CloudStatus.of(u.path), st == .local else { continue }
+                do { try FileManager.default.evictUbiquitousItem(at: u); freed += 1 } catch { failed += 1 }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if failed > 0 && freed == 0 {
+                    let a = NSAlert()
+                    a.messageText = L10n.t("cloudFreeUpFailed")
+                    a.informativeText = L10n.f("cloudFreeUpFailedInfo", self.cloudProvider?.name ?? "")
+                    a.runModal()
+                } else {
+                    self.showMessage(failed == 0 ? L10n.f("cloudFreed", freed) : L10n.f("cloudSomeFailed", failed))
+                }
+                self.refresh(nil)
+            }
+        }
+    }
+
+    @objc func cloudShare(_ sender: Any?) {
+        let urls = cloudTargets.map { URL(fileURLWithPath: $0) }
+        guard !urls.isEmpty else { return }
+        let picker = NSSharingServicePicker(items: urls)
+        picker.show(relativeTo: table.bounds, of: table, preferredEdge: .minY)
+    }
+
+    /// iCloud Drive: tạo liên kết tải xuống (FileManager.url(forPublishingUbiquitousItemAt:)) và chép vào bộ nhớ tạm.
+    @objc func cloudCopyLink(_ sender: Any?) {
+        guard let p = cloudTargets.first else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let link = try? FileManager.default.url(forPublishingUbiquitousItemAt: URL(fileURLWithPath: p), expiration: nil)
+            DispatchQueue.main.async {
+                if let link {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(link.absoluteString, forType: .string)
+                    self?.showMessage(L10n.t("cloudLinkCopied"))
+                } else {
+                    self?.showMessage(L10n.t("cloudLinkFailed"))
+                }
+            }
+        }
+    }
+
+    @objc func cloudViewOnline(_ sender: Any?) {
+        guard let p = cloudTargets.first, let u = cloudProvider?.webURL(for: p) else { return }
+        NSWorkspace.shared.open(u)
+    }
+
+    /// Sao chép liên kết, Quản lý quyền truy cập, Luôn giữ trên thiết bị (đánh dấu ghim) là lệnh riêng của ứng dụng
+    /// OneDrive / Google Drive; macOS chỉ hiện chúng trong Finder. Mở Finder và chọn sẵn mục để dùng menu đó.
+    @objc func cloudMoreInFinder(_ sender: Any?) {
+        let urls = cloudTargets.map { URL(fileURLWithPath: $0) }
+        let key = "MacMfile.skipCloudFinderHint"
+        let go = { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+        if UserDefaults.standard.bool(forKey: key) { go(); return }
+        let a = NSAlert()
+        a.messageText = L10n.f("cloudMoreInFinder", cloudProvider?.name ?? "")
+        a.informativeText = L10n.f("cloudFinderHint", cloudProvider?.name ?? "")
+        a.addButton(withTitle: L10n.t("openFinder"))
+        a.addButton(withTitle: L10n.t("cancel"))
+        a.showsSuppressionButton = true
+        a.suppressionButton?.title = L10n.t("dontAskAgain")
+        if a.runModal() == .alertFirstButtonReturn {
+            if a.suppressionButton?.state == .on { UserDefaults.standard.set(true, forKey: key) }
+            go()
         }
     }
 

@@ -44,3 +44,53 @@ public enum CloudStatus: String, Sendable {
         return .local
     }
 }
+
+/// Ổ đám mây chứa một đường dẫn: dùng cho menu chuột phải (Xem trực tuyến, tên dịch vụ).
+public struct CloudProvider: Equatable, Sendable {
+    public enum Kind: String, Sendable { case iCloud, oneDrive, oneDriveBusiness, googleDrive, dropbox, box, other }
+    public let kind: Kind
+    /// Thư mục gốc của ổ trên máy, ví dụ ~/Library/CloudStorage/OneDrive-Personal.
+    public let root: String
+    /// Tên hiển thị: "OneDrive", "Google Drive", "iCloud Drive"…
+    public let name: String
+
+    public static func of(_ path: String, home: String = NSHomeDirectory()) -> CloudProvider? {
+        let icloud = home + "/Library/Mobile Documents/com~apple~CloudDocs"
+        if path == icloud || path.hasPrefix(icloud + "/") { return CloudProvider(kind: .iCloud, root: icloud, name: "iCloud Drive") }
+        let cs = home + "/Library/CloudStorage/"
+        guard path.hasPrefix(cs) else { return nil }
+        let folder = String(path.dropFirst(cs.count).split(separator: "/", maxSplits: 1).first ?? "")
+        guard !folder.isEmpty else { return nil }
+        let root = cs + folder
+        if folder == "OneDrive-Personal" || folder == "OneDrive" { return CloudProvider(kind: .oneDrive, root: root, name: "OneDrive") }
+        if folder.hasPrefix("OneDrive-") { return CloudProvider(kind: .oneDriveBusiness, root: root, name: "OneDrive - " + folder.dropFirst(9)) }
+        if folder.hasPrefix("GoogleDrive") { return CloudProvider(kind: .googleDrive, root: root, name: "Google Drive") }
+        if folder.hasPrefix("Dropbox") { return CloudProvider(kind: .dropbox, root: root, name: "Dropbox") }
+        if folder.hasPrefix("Box") { return CloudProvider(kind: .box, root: root, name: "Box") }
+        return CloudProvider(kind: .other, root: root, name: folder)
+    }
+
+    /// Trang web của dịch vụ (Xem trực tuyến). Dropbox mở đúng thư mục; các dịch vụ khác không có địa chỉ
+    /// theo đường dẫn nên mở trang chính của ổ.
+    public func webURL(for path: String) -> URL? {
+        switch kind {
+        case .iCloud: return URL(string: "https://www.icloud.com/iclouddrive/")
+        case .oneDrive: return URL(string: "https://onedrive.live.com/")
+        case .oneDriveBusiness: return URL(string: "https://www.office.com/launch/onedrive")
+        case .googleDrive: return URL(string: "https://drive.google.com/drive/my-drive")
+        case .box: return URL(string: "https://app.box.com/folder/0")
+        case .dropbox:
+            var rel = path.hasPrefix(root) ? String(path.dropFirst(root.count)) : ""
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), !isDir.boolValue {
+                rel = (rel as NSString).deletingLastPathComponent
+            }
+            let enc = rel.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+            return URL(string: "https://www.dropbox.com/home" + enc)
+        case .other: return nil
+        }
+    }
+
+    /// Dịch vụ có menu riêng trong Finder (Chia sẻ, Sao chép liên kết, Quản lý quyền truy cập…).
+    public var hasFinderMenu: Bool { kind != .iCloud }
+}
