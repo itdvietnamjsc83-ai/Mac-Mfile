@@ -32,14 +32,14 @@ final class FileTableView: NSTableView {
     }
 }
 
-/// Phím xóa kiểu Windows (Mục 5.6): ⌫ (Backspace) quay lại, Delete / fn+delete / Cmd+⌫ chuyển vào Thùng rác,
-/// Shift+Delete xóa vĩnh viễn. Đổi được trong Tùy chọn: ⌫ chuyển vào Thùng rác.
+/// Phím xóa (Mục 5.6): mặc định ⌫ chuyển vào Thùng rác (Dũng chọn 11/11/2026), Delete / fn+delete / Cmd+⌫ cũng vậy,
+/// Shift+Delete xóa vĩnh viễn. Đổi được trong Tùy chọn: ⌫ quay lại như Backspace của Windows.
 enum DeleteKeys {
     enum Action { case back, trash, deleteForever, none }
     static let backspaceBackKey = "MacMfile.backspaceGoesBack"
 
     static var backspaceGoesBack: Bool {
-        get { UserDefaults.standard.object(forKey: backspaceBackKey) as? Bool ?? true }
+        get { UserDefaults.standard.object(forKey: backspaceBackKey) as? Bool ?? false }
         set { UserDefaults.standard.set(newValue, forKey: backspaceBackKey) }
     }
 

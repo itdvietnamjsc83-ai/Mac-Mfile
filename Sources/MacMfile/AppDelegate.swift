@@ -13,15 +13,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMainMenu()
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: L10n.didChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: Pins.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(settingsChanged), name: Settings.didChange, object: nil)
         restoreSession()
         installViewModeKeys()
+        installCtrlLikeWindows()
         AutoCleanWatcher.shared.restart()
         NSApp.activate(ignoringOtherApps: true)
         if !UserDefaults.standard.bool(forKey: firstRunKey) {
             UserDefaults.standard.set(true, forKey: firstRunKey)
             DispatchQueue.main.async { self.askAboutHotKey() }
-        } else if UserDefaults.standard.object(forKey: hotKeyEnabledKey) as? Bool ?? true {
+        } else if Settings.hotKeyEnabled {
             registerHotKey()
+        }
+    }
+
+    /// Áp dụng Tùy chọn / Phím tắt vừa đổi: dựng lại menu, đăng ký lại phím toàn hệ thống.
+    @objc private func settingsChanged() {
+        buildMainMenu()
+        hotKey = nil
+        if Settings.hotKeyEnabled { registerHotKey(quiet: true) }
+    }
+
+    @objc func showOptions(_ sender: Any?) { OptionsWindowController.show() }
+    @objc func showShortcutSettings(_ sender: Any?) { ShortcutsWindowController.show() }
+
+    /// "Dùng phím Ctrl như Windows": Ctrl+chữ cái làm như Cmd+chữ cái (Ctrl+C sao chép…).
+    private func installCtrlLikeWindows() {
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard Settings.ctrlLikeWindows else { return event }
+            let f = event.modifierFlags.intersection([.command, .control, .option, .shift])
+            guard f.contains(.control), !f.contains(.command), !f.contains(.option),
+                  let ch = event.charactersIgnoringModifiers?.lowercased(), ch.count == 1,
+                  let c = ch.unicodeScalars.first, CharacterSet.lowercaseLetters.contains(c) else { return event }
+            var nf = event.modifierFlags
+            nf.remove(.control)
+            nf.insert(.command)
+            return NSEvent.keyEvent(with: .keyDown, location: event.locationInWindow, modifierFlags: nf, timestamp: event.timestamp,
+                                    windowNumber: event.windowNumber, context: nil, characters: ch,
+                                    charactersIgnoringModifiers: event.charactersIgnoringModifiers ?? ch,
+                                    isARepeat: event.isARepeat, keyCode: event.keyCode) ?? event
         }
     }
 
@@ -33,7 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let saved = UserDefaults.standard.array(forKey: sessionKey) as? [[String]] ?? []
         let fm = FileManager.default
         let valid = saved.map { $0.filter { SpecialLocation.isSpecial($0) || fm.fileExists(atPath: $0) } }.filter { !$0.isEmpty }
-        if valid.isEmpty { openWindow(at: SpecialLocation.home); return }
+        if valid.isEmpty || !Settings.restoreSession { openWindow(at: Settings.startPage); return }
         for paths in valid { openWindow(paths: paths) }
     }
 
@@ -42,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { openWindow(at: SpecialLocation.home) }
+        if !flag { openWindow(at: Settings.startPage) }
         return true
     }
 
@@ -69,17 +99,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func newWindow(_ sender: Any?) {
-        openWindow(at: SpecialLocation.home)
+        openWindow(at: Settings.startPage)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     // MARK: Cmd+E toàn hệ thống
 
-    private func registerHotKey() {
-        hotKey = GlobalHotKey(keyCode: kVK_ANSI_E, modifiers: cmdKey) { [weak self] in
+    private func registerHotKey(quiet: Bool = false) {
+        let combo = Settings.shortcuts.combo(for: "openApp") ?? KeyCombo("cmd+e")!
+        guard let code = combo.keyCode else { return }
+        var mods = 0
+        if combo.command { mods |= cmdKey }
+        if combo.shift { mods |= shiftKey }
+        if combo.option { mods |= optionKey }
+        if combo.control { mods |= controlKey }
+        hotKey = GlobalHotKey(keyCode: code, modifiers: mods) { [weak self] in
             self?.newWindow(nil)
         }
-        if hotKey == nil {
+        if hotKey == nil && !quiet {
             let a = NSAlert()
             a.messageText = L10n.current == .vi
                 ? "Không thể dùng Cmd+E vì đã có ứng dụng khác sử dụng. Hãy chọn phím khác."
@@ -149,17 +186,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         a.runModal()
     }
 
+    /// Mục menu; phím lấy theo Cài đặt phím tắt nếu lệnh có trong danh sách phím (Mục 5.7).
     private func item(_ key: String, _ action: Selector?, _ equiv: String = "", _ mods: NSEvent.ModifierFlags = .command, tag: Int = 0) -> NSMenuItem {
-        let it = NSMenuItem(title: L10n.t(key), action: action, keyEquivalent: equiv)
-        it.keyEquivalentModifierMask = mods
+        var e = equiv, m = mods
+        if ShortcutRegistry.action(key) != nil {
+            let c = Settings.shortcuts.combo(for: key)
+            e = c?.menuKey ?? ""
+            m = c?.modifierFlags ?? []
+        }
+        let it = NSMenuItem(title: L10n.t(key), action: action, keyEquivalent: e)
+        it.keyEquivalentModifierMask = m
         it.tag = tag
         return it
+    }
+
+    /// Phím phụ: mục ẩn cùng lệnh, vẫn nhận phím.
+    private func secondaryItems(_ items: [NSMenuItem]) -> [NSMenuItem] {
+        var out: [NSMenuItem] = []
+        let b = Settings.shortcuts
+        for it in items {
+            out.append(it)
+            guard let action = it.action,
+                  let id = ShortcutRegistry.actions.first(where: { L10n.t($0.titleKey) == it.title && $0.id != "" })?.id,
+                  let c = b.combo(for: id + ".2") else { continue }
+            let alt = NSMenuItem(title: it.title, action: action, keyEquivalent: c.menuKey)
+            alt.keyEquivalentModifierMask = c.modifierFlags
+            alt.tag = it.tag
+            alt.isHidden = true
+            alt.allowsKeyEquivalentWhenHidden = true
+            out.append(alt)
+        }
+        return out
     }
 
     private func submenu(_ titleKey: String, _ items: [NSMenuItem]) -> NSMenuItem {
         let top = NSMenuItem()
         let m = NSMenu(title: L10n.t(titleKey))
-        items.forEach { m.addItem($0) }
+        secondaryItems(items).forEach { m.addItem($0) }
         top.submenu = m
         return top
     }
@@ -175,6 +238,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let am = NSMenu()
         am.addItem(item("about", #selector(showAbout(_:)), ""))
         am.addItem(.separator())
+        am.addItem(item("settings", #selector(showOptions(_:)), ","))
+        am.addItem(item("shortcutSettings", #selector(showShortcutSettings(_:)), ""))
         am.addItem(item("language", #selector(toggleLanguage(_:)), ""))
         am.addItem(.separator())
         am.addItem(item("hide", #selector(NSApplication.hide(_:)), "h"))
