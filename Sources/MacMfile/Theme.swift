@@ -61,6 +61,9 @@ class FlatButton: NSButton {
     var hoverColor = NSColor(srgbRed: 0xeb / 255, green: 0xeb / 255, blue: 0xeb / 255, alpha: 1)
     private var hovering = false { didSet { needsDisplay = true } }
     private var area: NSTrackingArea?
+    private(set) var fixedHeight: NSLayoutConstraint!
+    /// Nút bật/tắt đang chọn (như nút Chi tiết/Biểu tượng lớn ở thanh trạng thái Windows).
+    var isActive = false { didSet { needsDisplay = true } }
 
     convenience init(title: String, symbol: String?, target: AnyObject?, action: Selector?) {
         self.init(frame: .zero)
@@ -73,7 +76,8 @@ class FlatButton: NSButton {
         if let s = symbol { image = Theme.symbol(s); imagePosition = title.isEmpty ? .imageOnly : .imageLeading }
         imageHugsTitle = true
         translatesAutoresizingMaskIntoConstraints = false
-        heightAnchor.constraint(equalToConstant: 32).isActive = true
+        fixedHeight = heightAnchor.constraint(equalToConstant: 32)
+        fixedHeight.isActive = true
         setContentHuggingPriority(.required, for: .horizontal)
     }
 
@@ -93,7 +97,10 @@ class FlatButton: NSButton {
     override func mouseExited(with event: NSEvent) { hovering = false }
 
     override func draw(_ dirtyRect: NSRect) {
-        if hovering && isEnabled {
+        if isActive {
+            Theme.selection.setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill()
+        } else if hovering && isEnabled {
             hoverColor.setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill()
         }

@@ -6,7 +6,8 @@ import MfileCore
 /// Một tab duyệt thư mục: nút điều hướng, thanh địa chỉ, ô tìm kiếm, thanh lệnh, ngăn điều hướng,
 /// vùng nội dung chế độ Chi tiết và thanh trạng thái (9 vùng ở Mục 4).
 final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate,
-    NSTextFieldDelegate, NSSearchFieldDelegate, NSMenuDelegate, QLPreviewPanelDataSource {
+    NSTextFieldDelegate, NSSearchFieldDelegate, NSMenuDelegate, QLPreviewPanelDataSource,
+    NSCollectionViewDataSource, NSCollectionViewDelegate {
 
     private(set) var history: NavigationHistory
     var currentPath: String { history.current }
@@ -20,6 +21,13 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     private static var cutPaths: [String] = []
 
     let table = FileTableView()
+    let collection = FileCollectionView()
+    private let flow = NSCollectionViewFlowLayout()
+    private var tableScroll: NSScrollView!
+    private var collectionScroll: NSScrollView!
+    private(set) var viewMode: ViewMode = .details
+    private var compact = UserDefaults.standard.bool(forKey: "MacMfile.compact")
+    private var detailsToggle: FlatButton!, iconsToggle: FlatButton!
     private let sidebar = SidebarController()
     private let address = AddressField()
     private let search = NSSearchField()
@@ -80,6 +88,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         sidebar.onOpenNewTab = { [weak self] p in (self?.view.window?.windowController as? MainWindowController)?.addTab(path: p) }
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: L10n.didChangeNotification, object: nil)
         reloadTexts()
+        setViewMode(viewPrefs.mode(for: currentPath), remember: false)
         load()
     }
 
@@ -196,7 +205,170 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         scroll.documentView = table
         scroll.hasVerticalScroller = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        return scroll
+        tableScroll = scroll
+
+        flow.minimumInteritemSpacing = 2
+        flow.minimumLineSpacing = 2
+        flow.sectionInset = NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
+        collection.collectionViewLayout = flow
+        collection.isSelectable = true
+        collection.allowsMultipleSelection = true
+        collection.backgroundColors = [.white]
+        collection.register(FileCellItem.self, forItemWithIdentifier: FileCellItem.id)
+        collection.dataSource = self
+        collection.delegate = self
+        collection.setDraggingSourceOperationMask([.copy, .move], forLocal: false)
+        collection.registerForDraggedTypes([.fileURL])
+        let cmenu = NSMenu()
+        cmenu.delegate = self
+        collection.menu = cmenu
+        collection.onOpen = { [weak self] in self?.openSelected(nil) }
+        collection.onTrash = { [weak self] in self?.trashSelected(nil) }
+        collection.onDeleteForever = { [weak self] in self?.deleteForever(nil) }
+        collection.onRename = { [weak self] in self?.renameSelected(nil) }
+        collection.onQuickLook = { [weak self] in self?.quickLook(nil) }
+        let cs = NSScrollView()
+        cs.documentView = collection
+        cs.hasVerticalScroller = true
+        cs.hasHorizontalScroller = true
+        cs.autohidesScrollers = true
+        cs.translatesAutoresizingMaskIntoConstraints = false
+        cs.isHidden = true
+        cs.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(contentResized), name: NSView.frameDidChangeNotification, object: cs)
+        collectionScroll = cs
+
+        let container = ColorView(.white)
+        container.pin(scroll, insets: .init())
+        container.pin(cs, insets: .init())
+        return container
+    }
+
+    // MARK: Chế độ xem (FR-06, FR-21)
+
+    private static let modesKey = "MacMfile.viewModes"
+    private static let defaultModeKey = "MacMfile.defaultView"
+
+    private var viewPrefs: ViewPreferences {
+        get {
+            let d = UserDefaults.standard
+            let def = d.string(forKey: Self.defaultModeKey).flatMap(ViewMode.init(rawValue:)) ?? .details
+            return ViewPreferences(defaultMode: def, perFolder: d.dictionary(forKey: Self.modesKey) as? [String: String] ?? [:])
+        }
+        set {
+            UserDefaults.standard.set(newValue.perFolder, forKey: Self.modesKey)
+            UserDefaults.standard.set(newValue.defaultMode.rawValue, forKey: Self.defaultModeKey)
+        }
+    }
+
+    /// Đổi chế độ xem cho thư mục hiện tại và ghi nhớ (như Windows nhớ theo từng thư mục).
+    func setViewMode(_ mode: ViewMode, remember: Bool = true) {
+        let keep = selectionIndexes
+        let hadFocus = view.window?.firstResponder === table || view.window?.firstResponder === collection
+        viewMode = mode
+        if remember { var p = viewPrefs; p.set(mode, for: currentPath); viewPrefs = p }
+        let isTable = mode == .details
+        tableScroll.isHidden = !isTable
+        collectionScroll.isHidden = isTable
+        table.rowHeight = compact ? 24 : Theme.rowHeight
+        updateFlowLayout()
+        reloadContent()
+        selectIndexes(keep, scroll: true)
+        if hadFocus { view.window?.makeFirstResponder(isTable ? table : collection) }
+        detailsToggle?.isActive = isTable
+        iconsToggle?.isActive = mode == .largeIcons
+    }
+
+    @objc func setViewModeFromMenu(_ sender: NSMenuItem) {
+        let all = ViewMode.allCases
+        if all.indices.contains(sender.tag) { setViewMode(all[sender.tag]) }
+    }
+    @objc func viewDetails(_ sender: Any?) { setViewMode(.details) }
+    @objc func viewLargeIcons(_ sender: Any?) { setViewMode(.largeIcons) }
+
+    @objc func toggleCompact(_ sender: Any?) {
+        compact.toggle()
+        UserDefaults.standard.set(compact, forKey: "MacMfile.compact")
+        setViewMode(viewMode, remember: false)
+    }
+    var isCompact: Bool { compact }
+    var isShowingHidden: Bool { showHidden }
+
+    @objc private func contentResized() { updateFlowLayout() }
+
+    private func updateFlowLayout() {
+        let size = viewMode.itemSize(compact: compact)
+        flow.scrollDirection = viewMode.flowsInColumns ? .horizontal : .vertical
+        let fullWidth = max(200, collectionScroll.contentSize.width - 18)
+        flow.itemSize = NSSize(width: size.width == 0 ? fullWidth : size.width, height: size.height)
+        flow.minimumLineSpacing = viewMode == .content ? 0 : 2
+        flow.invalidateLayout()
+    }
+
+    private func reloadContent() {
+        if viewMode == .details { table.reloadData() } else { collection.reloadData() }
+    }
+
+    /// Chỉ số các mục đang chọn, dùng chung cho bảng Chi tiết và các chế độ biểu tượng.
+    private var selectionIndexes: IndexSet {
+        viewMode == .details ? table.selectedRowIndexes : collection.selectedIndexes
+    }
+
+    private func selectIndexes(_ set: IndexSet, scroll: Bool = false) {
+        if viewMode == .details {
+            table.selectRowIndexes(set, byExtendingSelection: false)
+            if scroll, let r = set.first { table.scrollRowToVisible(r) }
+        } else {
+            collection.select(set, scroll: scroll)
+        }
+        updateStatus()
+    }
+
+    private var clickedIndex: Int { viewMode == .details ? table.clickedRow : collection.clickedIndex }
+
+    // MARK: Lưới biểu tượng
+
+    func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int { items.count }
+
+    func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
+        let cell = collectionView.makeItem(withIdentifier: FileCellItem.id, for: indexPath)
+        if let c = cell as? FileCellItem, items.indices.contains(indexPath.item) {
+            let it = items[indexPath.item]
+            c.configure(it, mode: viewMode)
+            c.dimmed = Self.cutPaths.contains(it.path)
+        }
+        return cell
+    }
+
+    func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) { selectionChanged() }
+    func collectionView(_ collectionView: NSCollectionView, didDeselectItemsAt indexPaths: Set<IndexPath>) { selectionChanged() }
+
+    func collectionView(_ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath) -> NSPasteboardWriting? {
+        items.indices.contains(indexPath.item) ? URL(fileURLWithPath: items[indexPath.item].path) as NSURL : nil
+    }
+
+    func collectionView(_ collectionView: NSCollectionView, validateDrop draggingInfo: NSDraggingInfo,
+                        proposedIndexPath proposedDropIndexPath: AutoreleasingUnsafeMutablePointer<NSIndexPath>,
+                        dropOperation proposedDropOperation: UnsafeMutablePointer<NSCollectionView.DropOperation>) -> NSDragOperation {
+        let i = proposedDropIndexPath.pointee.item
+        if proposedDropOperation.pointee != .on || !items.indices.contains(i) || !items[i].isDirectory {
+            proposedDropOperation.pointee = .before
+        }
+        return NSEvent.modifierFlags.contains(.option) ? .copy : .move
+    }
+
+    func collectionView(_ collectionView: NSCollectionView, acceptDrop draggingInfo: NSDraggingInfo,
+                        indexPath: IndexPath, dropOperation: NSCollectionView.DropOperation) -> Bool {
+        let urls = draggingInfo.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        let i = indexPath.item
+        let dest = (dropOperation == .on && items.indices.contains(i) && items[i].isDirectory) ? items[i].path : currentPath
+        transfer(urls.map(\.path), to: dest, move: !NSEvent.modifierFlags.contains(.option))
+        return true
+    }
+
+    private func selectionChanged() {
+        updateStatus()
+        if QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible { QLPreviewPanel.shared().reloadData() }
     }
 
     private func buildStatusBar() -> NSView {
@@ -204,11 +376,13 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         langButton.target = self
         langButton.action = #selector(toggleLanguage(_:))
         langButton.font = Theme.font(11, weight: .semibold)
-        let stack = NSStackView(views: [status, message, NSView(), langButton])
+        detailsToggle = FlatButton(title: "", symbol: "list.bullet", target: self, action: #selector(viewDetails(_:)))
+        iconsToggle = FlatButton(title: "", symbol: "square.grid.2x2", target: self, action: #selector(viewLargeIcons(_:)))
+        let stack = NSStackView(views: [status, message, NSView(), detailsToggle, iconsToggle, langButton])
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
         bar.pin(stack, insets: .init(top: 0, left: 12, bottom: 0, right: 8))
-        langButton.heightAnchor.constraint(equalToConstant: 22).isActive = true
+        for b in [langButton, detailsToggle!, iconsToggle!] { b.fixedHeight.constant = 22 }
         return bar
     }
 
@@ -216,7 +390,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     @objc private func languageChanged() {
         reloadTexts()
-        table.reloadData()
+        reloadContent()
         updateLocationUI()
         updateStatus()
     }
@@ -234,6 +408,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             m.items[1].title = L10n.t("editAddress")
             m.items[2].title = L10n.t("pasteAndGo")
         }
+        detailsToggle.toolTip = L10n.t("view_details") + " (Ctrl+Shift+6)"
+        iconsToggle.toolTip = L10n.t("view_largeIcons") + " (Ctrl+Shift+2)"
         langButton.title = L10n.current == .vi ? "VI" : "EN"
         langButton.toolTip = L10n.t("language")
     }
@@ -260,6 +436,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     func load(selecting: [String] = []) {
         search.stringValue = ""
+        let mode = viewPrefs.mode(for: currentPath)
+        if mode != viewMode { setViewMode(mode, remember: false) }
         do {
             allItems = try DirectoryReader.list(currentPath, showHidden: showHidden)
         } catch {
@@ -268,9 +446,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         applySortAndFilter()
         if !selecting.isEmpty {
-            let rows = IndexSet(items.indices.filter { selecting.contains(items[$0].path) })
-            table.selectRowIndexes(rows, byExtendingSelection: false)
-            if let r = rows.first { table.scrollRowToVisible(r) }
+            selectIndexes(IndexSet(items.indices.filter { selecting.contains(items[$0].path) }), scroll: true)
         }
         updateLocationUI()
         sidebar.select(path: currentPath)
@@ -284,7 +460,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             list = list.filter { $0.name.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
         }
         items = FileSorting.sort(list, by: sortKey, ascending: ascending)
-        table.reloadData()
+        reloadContent()
     }
 
     private func updateLocationUI() {
@@ -402,11 +578,11 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     // MARK: Bảng Chi tiết
 
-    var selectedItems: [FileItem] { table.selectedRowIndexes.compactMap { items.indices.contains($0) ? items[$0] : nil } }
+    var selectedItems: [FileItem] { selectionIndexes.compactMap { items.indices.contains($0) ? items[$0] : nil } }
 
     private var targetItems: [FileItem] {
-        let clicked = table.clickedRow
-        if clicked >= 0 && !table.selectedRowIndexes.contains(clicked) { return [items[clicked]] }
+        let clicked = clickedIndex
+        if clicked >= 0 && items.indices.contains(clicked) && !selectionIndexes.contains(clicked) { return [items[clicked]] }
         return selectedItems
     }
 
@@ -452,13 +628,10 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         ascending = d.ascending
         let sel = selectedItems.map(\.path)
         applySortAndFilter()
-        table.selectRowIndexes(IndexSet(items.indices.filter { sel.contains(items[$0].path) }), byExtendingSelection: false)
+        selectIndexes(IndexSet(items.indices.filter { sel.contains(items[$0].path) }))
     }
 
-    func tableViewSelectionDidChange(_ notification: Notification) {
-        updateStatus()
-        if QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible { QLPreviewPanel.shared().reloadData() }
-    }
+    func tableViewSelectionDidChange(_ notification: Notification) { selectionChanged() }
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
         URL(fileURLWithPath: items[row].path) as NSURL
@@ -482,10 +655,10 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let row = table.clickedRow
+        let row = clickedIndex
         // Windows chọn luôn mục vừa nhấp chuột phải nếu nó chưa nằm trong vùng chọn.
-        if row >= 0 && !table.selectedRowIndexes.contains(row) {
-            table.selectRowIndexes([row], byExtendingSelection: false)
+        if row >= 0 && !selectionIndexes.contains(row) {
+            selectIndexes([row])
         }
         @discardableResult
         func add(_ key: String, _ sel: Selector?, _ shortcut: String = "", to m: NSMenu? = nil, title: String? = nil) -> NSMenuItem {
@@ -1084,7 +1257,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         NSWorkspace.shared.activateFileViewerSelecting(urls)
     }
 
-    @objc func selectAllItems(_ sender: Any?) { table.selectAll(sender) }
+    @objc func selectAllItems(_ sender: Any?) { selectIndexes(IndexSet(items.indices)) }
 
     // MARK: Menu thả của thanh lệnh
 
@@ -1121,14 +1294,26 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     @objc func showViewMenu(_ sender: Any?) {
         let m = NSMenu()
-        let details = NSMenuItem(title: L10n.t("details"), action: nil, keyEquivalent: "")
-        details.state = .on
-        m.addItem(details)
+        for (i, mode) in ViewMode.allCases.enumerated() {
+            let it = NSMenuItem(title: L10n.t(mode.titleKey) + "\tCtrl+Shift+\(i + 1)", action: #selector(setViewModeFromMenu(_:)), keyEquivalent: "")
+            it.target = self
+            it.tag = i
+            it.state = viewMode == mode ? .on : .off
+            m.addItem(it)
+        }
         m.addItem(.separator())
-        let hidden = NSMenuItem(title: L10n.current == .vi ? "Mục ẩn" : "Hidden items", action: #selector(toggleHidden(_:)), keyEquivalent: "")
+        let c = NSMenuItem(title: L10n.t("compactView"), action: #selector(toggleCompact(_:)), keyEquivalent: "")
+        c.target = self
+        c.state = compact ? .on : .off
+        m.addItem(c)
+        let showItem = NSMenuItem(title: L10n.t("show"), action: nil, keyEquivalent: "")
+        let sm = NSMenu()
+        let hidden = NSMenuItem(title: L10n.t("hiddenItems"), action: #selector(toggleHidden(_:)), keyEquivalent: "")
         hidden.target = self
         hidden.state = showHidden ? .on : .off
-        m.addItem(hidden)
+        sm.addItem(hidden)
+        showItem.submenu = sm
+        m.addItem(showItem)
         popUp(m, from: sender)
     }
 

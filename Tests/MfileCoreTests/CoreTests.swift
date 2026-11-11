@@ -164,3 +164,27 @@ final class ArchiveTests: XCTestCase {
         XCTAssertEqual(ArchiveSupport.baseName(of: "note.txt"), "note.txt")
     }
 }
+
+final class ViewModeTests: XCTestCase {
+    func testEightModesWithTitles() {
+        XCTAssertEqual(ViewMode.allCases.count, 8)
+        for m in ViewMode.allCases {
+            XCTAssertNotEqual(L10n.t(m.titleKey, .vi), m.titleKey, m.rawValue)
+            XCTAssertNotEqual(L10n.t(m.titleKey, .en), m.titleKey, m.rawValue)
+        }
+    }
+
+    func testPerFolderPreference() {
+        var p = ViewPreferences()
+        XCTAssertEqual(p.mode(for: "/a"), .details)
+        p.set(.largeIcons, for: "/a")
+        XCTAssertEqual(p.mode(for: "/a"), .largeIcons)
+        XCTAssertEqual(p.mode(for: "/b"), .details)
+    }
+
+    func testListFlowsInColumns() {
+        XCTAssertTrue(ViewMode.list.flowsInColumns)
+        XCTAssertFalse(ViewMode.smallIcons.flowsInColumns)
+        XCTAssertEqual(ViewMode.details.itemSize(compact: true).height, 24)
+    }
+}

@@ -4,6 +4,7 @@ import MfileCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windows: [MainWindowController] = []
+    private let viewMenuStates = ViewMenuStates()
     private var hotKey: GlobalHotKey?
     private let hotKeyEnabledKey = "MacMfile.hotKeyEnabled"
     private let firstRunKey = "MacMfile.firstRunDone"
@@ -13,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: L10n.didChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: Pins.didChange, object: nil)
         restoreSession()
+        installViewModeKeys()
         NSApp.activate(ignoringOtherApps: true)
         if !UserDefaults.standard.bool(forKey: firstRunKey) {
             UserDefaults.standard.set(true, forKey: firstRunKey)
@@ -98,6 +100,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let use = a.runModal() == .alertFirstButtonReturn
         UserDefaults.standard.set(use, forKey: hotKeyEnabledKey)
         if use { registerHotKey() }
+    }
+
+    /// Ctrl+Shift+1…8 đổi chế độ xem như Windows; bắt theo mã phím để không phụ thuộc bố cục bàn phím.
+    private func installViewModeKeys() {
+        let digitKeys: [UInt16] = [18, 19, 20, 21, 23, 22, 26, 28]
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+            guard flags == [.control, .shift], let i = digitKeys.firstIndex(of: event.keyCode),
+                  let wc = NSApp.keyWindow?.windowController as? MainWindowController else { return event }
+            wc.browser.setViewMode(ViewMode.allCases[i])
+            return nil
+        }
     }
 
     // MARK: Thanh menu macOS (Mục 5.4)
@@ -190,10 +204,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("search", #selector(BrowserViewController.focusSearch(_:)), "f"),
         ]))
 
-        main.addItem(submenu("menuView", [
+        // Windows: Ctrl+Shift+1…8 đổi chế độ xem. Giữ đúng phím Ctrl (Cmd+Shift+3/4/5 là chụp màn hình của macOS).
+        var viewItems: [NSMenuItem] = ViewMode.allCases.enumerated().map { i, mode in
+            item(mode.titleKey, #selector(BrowserViewController.setViewModeFromMenu(_:)), "\(i + 1)", [.control, .shift], tag: i)
+        }
+        viewItems += [
+            item("compactView", #selector(BrowserViewController.toggleCompact(_:)), ""),
+            item("hiddenItems", #selector(BrowserViewController.toggleHidden(_:)), ".", [.command, .shift]),
+            .separator(),
             item("refresh", #selector(BrowserViewController.refresh(_:)), "r"),
             item("refresh", #selector(BrowserViewController.refresh(_:)), f5, []),
-        ]))
+        ]
+        let viewMenu = submenu("menuView", viewItems)
+        viewMenu.submenu?.delegate = viewMenuStates
+        main.addItem(viewMenu)
 
         var go: [NSMenuItem] = [
             item("back", #selector(BrowserViewController.goBack(_:)), "["),
@@ -233,5 +257,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = main
         NSApp.windowsMenu = main.item(at: 5)?.submenu
         NSApp.helpMenu = help.submenu
+    }
+}
+
+
+/// Đánh dấu chế độ xem đang dùng trong menu Xem của thanh menu macOS.
+final class ViewMenuStates: NSObject, NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let browser = (NSApp.keyWindow?.windowController as? MainWindowController)?.browser
+        for it in menu.items {
+            if it.action == #selector(BrowserViewController.setViewModeFromMenu(_:)) {
+                it.state = browser?.viewMode == ViewMode.allCases[it.tag] ? .on : .off
+            } else if it.action == #selector(BrowserViewController.toggleCompact(_:)) {
+                it.state = browser?.isCompact == true ? .on : .off
+            } else if it.action == #selector(BrowserViewController.toggleHidden(_:)) {
+                it.state = browser?.isShowingHidden == true ? .on : .off
+            }
+        }
     }
 }
