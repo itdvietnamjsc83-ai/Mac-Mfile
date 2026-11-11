@@ -209,13 +209,13 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     private func buildTable() -> NSView {
-        let columns: [(String, String, CGFloat)] = [("name", "colName", 380), ("folder", "colFolder", 220), ("modified", "colModified", 150), ("type", "colType", 140), ("size", "colSize", 90)]
+        let columns: [(String, String, CGFloat)] = [("name", "colName", 380), ("status", "colStatus", 70), ("folder", "colFolder", 220), ("modified", "colModified", 150), ("type", "colType", 140), ("size", "colSize", 90)]
         for (id, _, w) in columns {
             let c = NSTableColumn(identifier: .init(id))
             c.width = w
             c.minWidth = 60
-            c.sortDescriptorPrototype = id == "folder" ? nil : NSSortDescriptor(key: id, ascending: true)
-            c.isHidden = id == "folder"
+            c.sortDescriptorPrototype = ["folder", "status"].contains(id) ? nil : NSSortDescriptor(key: id, ascending: true)
+            c.isHidden = id == "folder" || id == "status"
             table.addTableColumn(c)
         }
         table.rowHeight = Theme.rowHeight
@@ -537,7 +537,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         fwdB.toolTip = L10n.t("forward") + " (Cmd+])"
         upB.toolTip = L10n.t("up") + " (Cmd+↑)"
         refreshB.toolTip = L10n.t("refresh") + " (F5)"
-        let headers = ["name": "colName", "folder": "colFolder", "modified": "colModified", "type": "colType", "size": "colSize"]
+        let headers = ["name": "colName", "status": "colStatus", "folder": "colFolder", "modified": "colModified", "type": "colType", "size": "colSize"]
         for c in table.tableColumns { c.title = L10n.t(headers[c.identifier.rawValue] ?? "") }
         if let m = address.menu {
             m.items[0].title = L10n.t("copyAddress")
@@ -647,6 +647,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         items = FileSorting.sort(list, by: sortKey, ascending: ascending)
         table.tableColumn(withIdentifier: .init("folder"))?.isHidden = q.isEmpty || !Settings.searchSubfolders
+        // Cột Trạng thái đồng bộ chỉ hiện trong ổ đám mây (OneDrive, Google Drive, iCloud…), như Windows.
+        table.tableColumn(withIdentifier: .init("status"))?.isHidden = !CloudStatus.isCloudPath(currentPath + "/")
         reloadContent()
     }
 
@@ -833,6 +835,28 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
                 icon.widthAnchor.constraint(equalToConstant: 16), icon.heightAnchor.constraint(equalToConstant: 16),
             ])
             if Self.cutPaths.contains(it.path) { icon.alphaValue = 0.5 }
+        case "status":
+            t = label("")
+            if let st = CloudStatus.of(it.path) {
+                let (sym, color): (String, NSColor) = {
+                    switch st {
+                    case .onlineOnly: return ("cloud.fill", Theme.accent)
+                    case .local: return ("checkmark.circle", NSColor(srgbRed: 0.06, green: 0.49, blue: 0.06, alpha: 1))
+                    case .syncing: return ("arrow.triangle.2.circlepath", Theme.accent)
+                    case .error: return ("exclamationmark.circle", Theme.closeHover)
+                    }
+                }()
+                let icon = NSImageView(image: Theme.symbol(sym, size: 14) ?? NSImage())
+                icon.contentTintColor = color
+                icon.toolTip = L10n.t(st.l10nKey)
+                icon.translatesAutoresizingMaskIntoConstraints = false
+                cell.addSubview(icon)
+                NSLayoutConstraint.activate([
+                    icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
+                    icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                ])
+                cell.toolTip = L10n.t(st.l10nKey)
+            }
         case "modified": t = label(Formatting.date(it.modified), color: Theme.secondaryText)
         case "type": t = label(it.typeDescription(), color: Theme.secondaryText)
         case "folder":

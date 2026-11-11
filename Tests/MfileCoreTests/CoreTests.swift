@@ -379,3 +379,16 @@ final class RecursiveSearchTests: XCTestCase {
         XCTAssertFalse(RecursiveSearch.matches("abc", ""))
     }
 }
+
+final class CloudStatusTests: XCTestCase {
+    func testStatus() {
+        let nd = URLUbiquitousItemDownloadingStatus.notDownloaded.rawValue
+        let cur = URLUbiquitousItemDownloadingStatus.current.rawValue
+        XCTAssertEqual(CloudStatus.from(downloading: nd, isDownloading: false, isUploading: false, isUploaded: true, hasError: false), .onlineOnly)
+        XCTAssertEqual(CloudStatus.from(downloading: cur, isDownloading: false, isUploading: false, isUploaded: true, hasError: false), .local)
+        XCTAssertEqual(CloudStatus.from(downloading: cur, isDownloading: false, isUploading: true, isUploaded: false, hasError: false), .syncing)
+        XCTAssertEqual(CloudStatus.from(downloading: nd, isDownloading: false, isUploading: false, isUploaded: true, hasError: true), .error)
+        XCTAssertTrue(CloudStatus.isCloudPath("/Users/a/Library/CloudStorage/OneDrive-Personal/x", home: "/Users/a"))
+        XCTAssertFalse(CloudStatus.isCloudPath("/Users/a/Documents", home: "/Users/a"))
+    }
+}
