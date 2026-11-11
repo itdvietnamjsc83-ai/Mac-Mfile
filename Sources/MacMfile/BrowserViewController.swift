@@ -459,8 +459,10 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
         flow.invalidateLayout()
     }
 
+    /// Nạp lại cả bảng Chi tiết lẫn lưới biểu tượng (lưới đang ẩn cũng nạp) để hai bên luôn khớp với `items`.
     private func reloadContent() {
-        if viewMode == .details { table.reloadData() } else { collection.reloadData() }
+        table.reloadData()
+        collection.reloadData()
     }
 
     /// Chỉ số các mục đang chọn, dùng chung cho bảng Chi tiết và các chế độ biểu tượng.
@@ -624,7 +626,7 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
 
     func load(selecting: [String] = []) {
         search.stringValue = ""
-        searchGeneration += 1
+        searchToken.next()
         searchResults = nil
         let special = isSpecialPage
         specialPage.scroll.isHidden = !special
@@ -661,8 +663,11 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
         sidePane.update(selection: selectedItems, folder: currentPath)
     }
 
-    private var searchGeneration = 0
+    /// Bộ đếm lượt tìm, đọc được an toàn từ luồng nền (thay cho việc chờ luồng chính).
+    private let searchToken = SearchToken()
     private var searchResults: [FileItem]?
+    /// Từ khóa của lượt tìm đã xong (bấm Enter lại với cùng từ khóa thì không tìm lại).
+    private var completedQuery: String?
     private var isSearching: Bool { !search.stringValue.trimmingCharacters(in: .whitespaces).isEmpty }
 
     private func applySortAndFilter() {
@@ -672,37 +677,39 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
             list = searchResults ?? list.filter { RecursiveSearch.matches($0.name, q) }
         }
         items = FileSorting.sort(list, by: sortKey, ascending: ascending)
-        table.tableColumn(withIdentifier: .init("folder"))?.isHidden = q.isEmpty || !Settings.searchSubfolders
-        // Cột Trạng thái đồng bộ chỉ hiện trong ổ đám mây (OneDrive, Google Drive, iCloud…), như Windows.
-        table.tableColumn(withIdentifier: .init("status"))?.isHidden = !CloudStatus.isCloudPath(currentPath + "/")
+        // Nạp lại dữ liệu trước rồi mới ẩn/hiện cột: bảng không được hỏi dòng đã không còn trong danh sách.
         reloadContent()
+        let showFolder = !q.isEmpty && Settings.searchSubfolders
+        // Cột Trạng thái đồng bộ chỉ hiện trong ổ đám mây (OneDrive, Google Drive, iCloud…), như Windows.
+        let showStatus = CloudStatus.isCloudPath(currentPath + "/")
+        for (id, show) in [("folder", showFolder), ("status", showStatus)] {
+            if let c = table.tableColumn(withIdentifier: .init(id)), c.isHidden == show { c.isHidden = !show }
+        }
     }
 
     /// Tìm cả thư mục con ở luồng nền (Mục 5.8, bản mẫu bảng 12, 14); gõ tiếp thì hủy lượt cũ.
-    private func startSearch() {
-        searchGeneration += 1
+    /// `immediately`: bấm Enter thì tìm ngay, không chờ người dùng gõ xong.
+    private func startSearch(immediately: Bool = false) {
+        let gen = searchToken.next()
         searchResults = nil
-        let gen = searchGeneration
+        completedQuery = nil
         let q = search.stringValue.trimmingCharacters(in: .whitespaces)
         applySortAndFilter()
         guard !q.isEmpty, Settings.searchSubfolders, !isSpecialPage else { updateStatus(); return }
         status.stringValue = L10n.t("searching")
-        let root = currentPath, hidden = showHidden
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            guard let self, gen == self.generationSnapshot() else { return }
-            let found = RecursiveSearch.run(in: root, query: q, showHidden: hidden) { [weak self] in gen != self?.generationSnapshot() }
-            DispatchQueue.main.async {
-                guard gen == self.searchGeneration else { return }
+        // Luồng nền chỉ giữ dữ liệu cần thiết (thư mục, từ khóa, bộ đếm lượt tìm), không giữ màn hình.
+        let root = currentPath, hidden = showHidden, token = searchToken
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + (immediately ? 0 : 0.25)) { [weak self] in
+            guard token.current == gen else { return }
+            let found = RecursiveSearch.run(in: root, query: q, showHidden: hidden) { token.current != gen }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, token.current == gen, root == self.currentPath else { return }
                 self.searchResults = found
+                self.completedQuery = q
                 self.applySortAndFilter()
                 self.updateStatus()
             }
         }
-    }
-
-    private func generationSnapshot() -> Int {
-        if Thread.isMainThread { return searchGeneration }
-        return DispatchQueue.main.sync { searchGeneration }
     }
 
     private func updateLocationUI() {
@@ -803,6 +810,12 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        // Enter trong ô tìm kiếm: tìm ngay (như Windows), giữ con trỏ trong ô, không chuyển phím đi nơi khác.
+        if control === search, commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            let q = search.stringValue.trimmingCharacters(in: .whitespaces)
+            if completedQuery != q { startSearch(immediately: true) }
+            return true
+        }
         if control === address, commandSelector == #selector(NSResponder.cancelOperation(_:)) {
             address.restoreDisplay()
             view.window?.makeFirstResponder(table)
@@ -844,7 +857,7 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
     func numberOfRows(in tableView: NSTableView) -> Int { items.count }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let id = tableColumn?.identifier.rawValue else { return nil }
+        guard let id = tableColumn?.identifier.rawValue, items.indices.contains(row) else { return nil }
         let it = items[row]
         let cell = NSTableCellView()
         let t: NSTextField
@@ -917,7 +930,7 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
     func tableViewSelectionDidChange(_ notification: Notification) { selectionChanged() }
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
-        URL(fileURLWithPath: items[row].path) as NSURL
+        items.indices.contains(row) ? URL(fileURLWithPath: items[row].path) as NSURL : nil
     }
 
     func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
@@ -1866,5 +1879,23 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { selectedItems.count }
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
         URL(fileURLWithPath: selectedItems[index].path) as NSURL
+    }
+}
+
+/// Số thứ tự lượt tìm kiếm, khóa bằng NSLock nên luồng nền đọc được mà không phải chờ luồng chính.
+final class SearchToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    var current: Int {
+        lock.lock(); defer { lock.unlock() }
+        return value
+    }
+
+    @discardableResult
+    func next() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        value += 1
+        return value
     }
 }
