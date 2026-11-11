@@ -100,6 +100,8 @@ class FlatButton: NSButton {
     private(set) var fixedHeight: NSLayoutConstraint!
     /// Nút bật/tắt đang chọn (như nút Chi tiết/Biểu tượng lớn ở thanh trạng thái Windows).
     var isActive = false { didSet { needsDisplay = true } }
+    /// Khoảng đệm hai bên (tổng), mặc định 16 như thanh lệnh; thanh địa chỉ dùng nhỏ hơn cho xích lại.
+    var horizontalPadding: CGFloat = 16 { didSet { invalidateIntrinsicContentSize() } }
 
     convenience init(title: String, symbol: String?, target: AnyObject?, action: Selector?) {
         self.init(frame: .zero)
@@ -119,7 +121,7 @@ class FlatButton: NSButton {
 
     override var intrinsicContentSize: NSSize {
         let s = super.intrinsicContentSize
-        return NSSize(width: s.width + 16, height: 32)
+        return NSSize(width: s.width + horizontalPadding, height: 32)
     }
 
     override func updateTrackingAreas() {

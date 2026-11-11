@@ -144,6 +144,9 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         stack.translatesAutoresizingMaskIntoConstraints = false
         bar.pin(stack, insets: .init(top: 7, left: 10, bottom: 7, right: 10))
         address.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // Kích thước cửa sổ chỉ đổi khi người dùng kéo: nội dung dài (đường dẫn sâu) không được đẩy cửa sổ giãn ra.
+        address.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
         bar.addSubview(breadcrumb)
         NSLayoutConstraint.activate([
             breadcrumb.leadingAnchor.constraint(equalTo: address.leadingAnchor, constant: 2),
@@ -188,6 +191,9 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         let stack = NSStackView(views: views)
         stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
+        // Cửa sổ hẹp: các nút cuối thanh lệnh bị che đi chứ không đẩy cửa sổ giãn ra.
+        stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        for (i, v) in views.enumerated() { stack.setVisibilityPriority(NSStackView.VisibilityPriority(rawValue: Float(1000 - i * 20)), for: v) }
         bar.addSubview(stack)
         // Nút "Chi tiết" ở góc phải thanh lệnh như Windows 11: bật/tắt ngăn chi tiết.
         paneButton = b("details", "sidebar.right", #selector(toggleDetailsPane(_:)))
@@ -509,6 +515,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         let stack = NSStackView(views: [status, message, NSView(), langButton, themeButton, detailsToggle, iconsToggle])
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        message.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         bar.pin(stack, insets: .init(top: 0, left: 12, bottom: 0, right: 8))
         for b in [langButton, detailsToggle!, iconsToggle!, themeButton!] { b.fixedHeight.constant = 22 }
         return bar

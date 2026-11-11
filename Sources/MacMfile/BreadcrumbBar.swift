@@ -27,10 +27,14 @@ final class BreadcrumbBar: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
+        // Đường dẫn dài không được đẩy cửa sổ giãn ra: thanh tự ẩn các đoạn đầu và hiện «.
+        stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        stack.setHuggingPriority(.defaultLow, for: .horizontal)
         overflow.target = self; overflow.action = #selector(showOverflow(_:))
         historyB.target = self; historyB.action = #selector(showHistory(_:))
         historyB.toolTip = L10n.t("recentLocations")
         for b in [overflow, historyB] { b.fixedHeight.constant = 24 }
+        overflow.horizontalPadding = 8
         addSubview(stack)
         addSubview(historyB)
         NSLayoutConstraint.activate([
@@ -66,11 +70,15 @@ final class BreadcrumbBar: NSView {
             let chev = FlatButton(title: "", symbol: "chevron.right", target: self, action: #selector(showChildren(_:)))
             chev.tag = i - 1
             chev.fixedHeight.constant = 24
+            chev.horizontalPadding = 2
+            chev.image = Theme.symbol("chevron.right", size: 10)
             chev.toolTip = L10n.t("subfolders")
             if i > 0 { stack.addArrangedSubview(chev) }
             let b = FlatButton(title: c.title, symbol: nil, target: self, action: #selector(crumbClicked(_:)))
             b.tag = i
             b.fixedHeight.constant = 24
+            b.horizontalPadding = 8
+            b.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             b.toolTip = SpecialLocation.isSpecial(c.path) ? c.title : c.path
             b.lineBreakMode = .byTruncatingTail
             stack.addArrangedSubview(b)
@@ -84,6 +92,8 @@ final class BreadcrumbBar: NSView {
             let chev = FlatButton(title: "", symbol: "chevron.right", target: self, action: #selector(showChildren(_:)))
             chev.tag = list.count - 1
             chev.fixedHeight.constant = 24
+            chev.horizontalPadding = 2
+            chev.image = Theme.symbol("chevron.right", size: 10)
             stack.addArrangedSubview(chev)
             stack.setVisibilityPriority(.mustHold, for: chev)
         }
