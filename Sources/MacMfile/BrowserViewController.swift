@@ -403,7 +403,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         let urls = draggingInfo.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         let i = indexPath.item
         let dest = (dropOperation == .on && items.indices.contains(i) && items[i].isDirectory) ? items[i].path : currentPath
-        transfer(urls.map(\.path), to: dest, move: !NSEvent.modifierFlags.contains(.option))
+        transfer(urls.map(\.path), to: dest, move: dropMoves(urls.map(\.path), to: dest))
         return true
     }
 
@@ -721,7 +721,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
         let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         let dest = (row >= 0 && items.indices.contains(row) && items[row].isDirectory) ? items[row].path : currentPath
-        transfer(urls.map(\.path), to: dest, move: !NSEvent.modifierFlags.contains(.option))
+        transfer(urls.map(\.path), to: dest, move: dropMoves(urls.map(\.path), to: dest))
         return true
     }
 
@@ -983,25 +983,29 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         if move { Self.cutPaths = [] }
     }
 
-    /// Sao chép hoặc di chuyển; trùng tên thì giữ cả hai bằng cách thêm " (2)" (hộp thoại trùng tên đầy đủ ở bước sau).
+    /// Windows: kéo thả cùng ổ thì di chuyển, khác ổ thì sao chép; giữ Option để luôn sao chép, Cmd để luôn di chuyển.
+    private func dropMoves(_ paths: [String], to dest: String) -> Bool {
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.option) { return false }
+        if flags.contains(.command) { return true }
+        let key: Set<URLResourceKey> = [.volumeIdentifierKey]
+        let d = (try? URL(fileURLWithPath: dest).resourceValues(forKeys: key).volumeIdentifier) as? NSObject
+        return paths.allSatisfy { p in
+            let v = (try? URL(fileURLWithPath: p).resourceValues(forKeys: key).volumeIdentifier) as? NSObject
+            return v != nil && d != nil && v!.isEqual(d)
+        }
+    }
+
+    /// Sao chép hoặc di chuyển chạy nền: hỏi khi trùng tên, hiện tiến trình khi lâu (Mục 5.10).
     private func transfer(_ paths: [String], to dest: String, move: Bool) {
         guard !SpecialLocation.isSpecial(dest) else { NSSound.beep(); return }
-        let fm = FileManager.default
-        var done: [String] = []
-        for src in paths {
-            let name = (src as NSString).lastPathComponent
-            if move && (src as NSString).deletingLastPathComponent == dest { continue }
-            if move && (dest == src || dest.hasPrefix(src + "/")) { continue }
-            let target = uniquePath(in: dest, name: name)
-            do {
-                if move { try fm.moveItem(atPath: src, toPath: target) } else { try fm.copyItem(atPath: src, toPath: target) }
-                done.append(target)
-            } catch {
-                showError(error.localizedDescription)
-                break
-            }
+        let op = FileOperation(sources: paths, dest: dest, move: move)
+        op.completion = { [weak self] done, error in
+            guard let self = self else { return }
+            if let e = error { self.showError(e) }
+            if dest == self.currentPath { self.load(selecting: done) } else { self.refresh(nil) }
         }
-        if dest == currentPath { load(selecting: done) } else { refresh(nil) }
+        op.start()
     }
 
     private func uniquePath(in dir: String, name: String) -> String {

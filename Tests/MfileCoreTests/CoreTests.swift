@@ -233,3 +233,30 @@ final class MetadataCleanerTests: XCTestCase {
     }
 }
 #endif
+
+final class FileNamingTests: XCTestCase {
+    func testCopyNameLikeWindows() {
+        var existing: Set<String> = ["Báo cáo.docx"]
+        let a = FileNaming.copyName("Báo cáo.docx", lang: .vi) { existing.contains($0) }
+        XCTAssertEqual(a, "Báo cáo - Bản sao.docx")
+        existing.insert(a)
+        XCTAssertEqual(FileNaming.copyName("Báo cáo.docx", lang: .vi) { existing.contains($0) }, "Báo cáo - Bản sao (2).docx")
+        XCTAssertEqual(FileNaming.copyName("Thư mục", lang: .en) { _ in false }, "Thư mục - Copy")
+    }
+
+    func testKeepBoth() {
+        let existing: Set<String> = ["a.txt", "a (2).txt"]
+        XCTAssertEqual(FileNaming.keepBothName("a.txt") { existing.contains($0) }, "a (3).txt")
+        XCTAssertEqual(FileNaming.keepBothName(".env") { $0 == ".env" }, ".env (2)")
+    }
+
+    func testStats() {
+        var s = TransferStats(started: Date(timeIntervalSince1970: 0))
+        s.totalBytes = 1000
+        s.doneBytes = 250
+        XCTAssertEqual(s.fraction, 0.25)
+        XCTAssertEqual(s.secondsRemaining(now: Date(timeIntervalSince1970: 10))!, 30, accuracy: 0.01)
+        XCTAssertEqual(TransferStats.describe(seconds: 125, lang: .vi), "Khoảng 2 phút")
+        XCTAssertEqual(TransferStats.describe(seconds: 5, lang: .en), "About 5 seconds")
+    }
+}
