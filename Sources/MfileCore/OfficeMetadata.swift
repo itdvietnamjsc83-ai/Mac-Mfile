@@ -99,6 +99,120 @@ public enum OfficeMetadata {
         return String(xml[..<xml.index(after: openEnd)]) + "</Properties>"
     }
 
+    // MARK: Xóa sâu bên trong nội dung (như "Kiểm tra tài liệu" của Office)
+
+    /// Tên thay cho người thật trong ghi chú, theo dõi thay đổi: "Tác giả" / "Author", như Office tự làm.
+    public static var anonymousName: String { L10n.t("anonAuthor") }
+    public static var anonymousInitials: String { L10n.t("anonInitials") }
+
+    /// Đổi giá trị các thuộc tính `names` (ví dụ w:author="Nguyễn Văn A") thành `value`.
+    static func replacingAttributes(_ names: [String], with value: String, in xml: String) -> String {
+        guard !names.isEmpty else { return xml }
+        let alt = names.map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|")
+        let re = try! NSRegularExpression(pattern: "(\\s(?:\(alt))=\")[^\"]*(\")")
+        let tpl = "$1" + NSRegularExpression.escapedTemplate(for: escape(value)) + "$2"
+        return re.stringByReplacingMatches(in: xml, range: NSRange(location: 0, length: (xml as NSString).length), withTemplate: tpl)
+    }
+
+    /// Bỏ hẳn các thuộc tính `names` (ví dụ w:date: giờ sửa, giờ ghi chú).
+    static func removingAttributes(_ names: [String], in xml: String) -> String {
+        let alt = names.map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|")
+        let re = try! NSRegularExpression(pattern: "\\s(?:\(alt))=\"[^\"]*\"")
+        return re.stringByReplacingMatches(in: xml, range: NSRange(location: 0, length: (xml as NSString).length), withTemplate: "")
+    }
+
+    /// Bỏ các phần tử (rỗng hoặc có nội dung) theo tên thẻ.
+    static func removingElements(_ tag: String, in xml: String) -> String {
+        let t = NSRegularExpression.escapedPattern(for: tag)
+        let re = try! NSRegularExpression(pattern: "<\(t)(\\s[^>]*)?(/>|>[\\s\\S]*?</\(t)>)")
+        return re.stringByReplacingMatches(in: xml, range: NSRange(location: 0, length: (xml as NSString).length), withTemplate: "")
+    }
+
+    /// Đổi nội dung các phần tử <tag>…</tag> thành `value`; giữ nguyên nội dung bắt đầu bằng `keepingPrefix`
+    /// (Excel ghi "tc={…}" làm khóa nối ghi chú cũ với bình luận mới, đổi đi sẽ hỏng liên kết).
+    static func replacingElementText(_ tag: String, with value: String, in xml: String, keepingPrefix: String? = nil) -> String {
+        let t = NSRegularExpression.escapedPattern(for: tag)
+        let re = try! NSRegularExpression(pattern: "(<\(t)(?:\\s[^>]*)?>)([\\s\\S]*?)(</\(t)>)")
+        let ns = xml as NSString
+        var out = ""
+        var last = 0
+        for m in re.matches(in: xml, range: NSRange(location: 0, length: ns.length)) {
+            out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
+            let inner = ns.substring(with: m.range(at: 2))
+            if let k = keepingPrefix, inner.hasPrefix(k) { out += ns.substring(with: m.range) }
+            else { out += ns.substring(with: m.range(at: 1)) + escape(value) + ns.substring(with: m.range(at: 3)) }
+            last = m.range.location + m.range.length
+        }
+        out += ns.substring(from: last)
+        return out
+    }
+
+    /// Thêm thuộc tính vào thẻ mở đầu tiên `<tag` nếu thẻ đó chưa có.
+    static func addingAttribute(_ attr: String, _ value: String, toFirst tag: String, in xml: String) -> String {
+        guard let r = xml.range(of: "<" + tag), let end = xml[r.upperBound...].firstIndex(of: ">") else { return xml }
+        let next = xml[r.upperBound]
+        guard next == " " || next == ">" || next == "/" || next == "\n" || next == "\r" || next == "\t" else { return xml }
+        let openTag = xml[r.lowerBound..<end]
+        if openTag.contains(" " + attr + "=") { return xml }
+        var out = xml
+        out.insert(contentsOf: " \(attr)=\"\(value)\"", at: r.upperBound)
+        return out
+    }
+
+    /// Word: bật "Xóa thông tin cá nhân khỏi thuộc tính tệp khi lưu" và "xóa ngày giờ" trong settings.xml,
+    /// đặt đúng thứ tự lược đồ (sau w:writeProtection, w:view, w:zoom) để Word không báo lỗi tệp.
+    static func wordSettingsWithPrivacy(_ xml: String) -> String {
+        var out = xml
+        let flags = ["w:removePersonalInformation", "w:removeDateAndTime"].filter { !out.contains("<" + $0) }
+        guard !flags.isEmpty, let open = out.range(of: "<w:settings"), let openEnd = out[open.upperBound...].firstIndex(of: ">") else { return xml }
+        var insertAt = out.index(after: openEnd)
+        for prev in ["w:writeProtection", "w:view", "w:zoom"] {
+            let t = NSRegularExpression.escapedPattern(for: prev)
+            let re = try! NSRegularExpression(pattern: "<\(t)(\\s[^>]*)?(/>|>[\\s\\S]*?</\(t)>)")
+            if let m = re.firstMatch(in: out, range: NSRange(location: 0, length: (out as NSString).length)),
+               let r = Range(m.range, in: out), r.upperBound > insertAt { insertAt = r.upperBound }
+        }
+        out.insert(contentsOf: flags.map { "<\($0)/>" }.joined(), at: insertAt)
+        return out
+    }
+
+    /// Làm sạch một phần XML trong gói theo đường dẫn của nó (word/…, xl/…, ppt/…).
+    public static func deepCleaned(_ xml: String, part: String) -> String {
+        let name = anonymousName, ini = anonymousInitials
+        let lower = part.lowercased()
+        guard lower.hasSuffix(".xml") else { return xml }
+        var x = xml
+        if lower.hasPrefix("word/") {
+            // Ghi chú, theo dõi thay đổi (w:ins, w:del, w:rPrChange…), danh sách người dùng (people.xml).
+            x = replacingAttributes(["w:author", "w15:author"], with: name, in: x)
+            x = replacingAttributes(["w:initials"], with: ini, in: x)
+            x = removingAttributes(["w:date", "w16du:dateUtc"], in: x)
+            x = removingElements("w15:presenceInfo", in: x)
+            if lower == "word/settings.xml" { x = wordSettingsWithPrivacy(x) }
+        } else if lower.hasPrefix("xl/") {
+            if lower.hasPrefix("xl/comments") { x = replacingElementText("author", with: name, in: x, keepingPrefix: "tc=") }
+            if lower.hasPrefix("xl/persons/") {
+                x = replacingAttributes(["displayName"], with: name, in: x)
+                x = replacingAttributes(["userId"], with: "", in: x)
+                x = replacingAttributes(["providerId"], with: "None", in: x)
+            }
+            if lower.hasPrefix("xl/revisions/") { x = replacingAttributes(["userName"], with: name, in: x) }
+            if lower == "xl/workbook.xml" {
+                x = replacingAttributes(["userName"], with: name, in: x)
+                x = addingAttribute("filterPrivacy", "1", toFirst: "workbookPr", in: x)
+            }
+        } else if lower.hasPrefix("ppt/") {
+            if lower == "ppt/commentauthors.xml" || lower == "ppt/authors.xml" {
+                x = replacingAttributes(["name"], with: name, in: x)
+                x = replacingAttributes(["initials"], with: ini, in: x)
+                x = replacingAttributes(["userId"], with: "", in: x)
+                x = replacingAttributes(["providerId"], with: "None", in: x)
+            }
+            if lower == "ppt/presentation.xml" { x = addingAttribute("removePersonalInfoOnSave", "1", toFirst: "p:presentation", in: x) }
+        }
+        return x
+    }
+
     #if os(macOS)
     // MARK: Tệp
 
@@ -186,6 +300,9 @@ public enum OfficeMetadata {
             try editPart(dir, Part.core.rawValue) { cleaned($0, part: .core) }
             try editPart(dir, Part.app.rawValue) { cleaned($0, part: .app) }
             try editPart(dir, "docProps/custom.xml") { cleanedCustom($0) }
+            for rel in FileManager.default.subpaths(atPath: dir) ?? [] where rel.lowercased().hasSuffix(".xml") && !rel.hasPrefix("docProps/") {
+                try editPart(dir, rel) { deepCleaned($0, part: rel) }
+            }
         }
     }
     #endif
