@@ -13,8 +13,12 @@ final class FileCollectionView: NSCollectionView {
     var onBack: (() -> Void)?
     /// Chỉ số mục vừa nhấp chuột phải (-1 nếu nhấp vào chỗ trống).
     private(set) var clickedIndex = -1
+    /// Bấm chậm lần hai lên tên mục đang chọn: đổi tên tại chỗ (đối số là chỉ số mục).
+    var onSlowClickRename: ((Int) -> Void)?
+    let slowClick = SlowClickRenamer()
 
     override func keyDown(with event: NSEvent) {
+        slowClick.cancel()
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         switch event.keyCode {
         case 36, 76: if flags.contains(.option) { onProperties?() } else { onOpen?() }
@@ -32,7 +36,18 @@ final class FileCollectionView: NSCollectionView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        let p0 = convert(event.locationInWindow, from: nil)
+        var index = -1
+        if let ip = indexPathForItem(at: p0), selectionIndexPaths == [ip],
+           let cell = item(at: ip) as? FileCellItem, cell.nameRect(in: self).insetBy(dx: -2, dy: -2).contains(p0) {
+            index = ip.item
+        }
+        slowClick.mouseDown(event, in: self, onName: index >= 0)
         super.mouseDown(with: event)
+        slowClick.mouseDownFinished { [weak self] in
+            guard let self, self.selectedIndexes == IndexSet(integer: index) else { return }
+            self.onSlowClickRename?(index)
+        }
         if event.clickCount == 2 {
             let p = convert(event.locationInWindow, from: nil)
             if indexPathForItem(at: p) != nil { onOpen?() }
@@ -123,6 +138,30 @@ final class FileCellItem: NSCollectionViewItem {
         name.cell?.truncatesLastVisibleLine = true
         view.needsLayout = true
         view.needsDisplay = true
+    }
+
+    /// Khung chữ tên (theo tọa độ của `view`), dùng cho bấm chậm lần hai và ô sửa tên tại chỗ.
+    /// Tên một dòng: chỉ phần có chữ, như Windows.
+    func nameRect(in target: NSView) -> NSRect {
+        view.layoutSubtreeIfNeeded()
+        var r = name.frame
+        if !mode.showsLabelBelowIcon { r.size.width = min(r.width, name.intrinsicContentSize.width + 4) }
+        return view.convert(r, to: target)
+    }
+
+    /// Khung cho ô sửa tên: rộng hết chỗ dành cho tên.
+    func nameEditRect(in target: NSView) -> (NSRect, multiline: Bool) {
+        view.layoutSubtreeIfNeeded()
+        var r = name.frame
+        let below = mode.showsLabelBelowIcon
+        if below {
+            r = r.insetBy(dx: -2, dy: -2)
+        } else {
+            r.origin.y -= 3
+            r.size.height = 22
+            r.size.width = max(80, r.width)
+        }
+        return (view.convert(r, to: target), below)
     }
 
     override var isSelected: Bool { didSet { view.needsDisplay = true } }

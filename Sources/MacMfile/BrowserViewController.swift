@@ -262,6 +262,7 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
         table.onTrash = { [weak self] in self?.trashSelected(nil) }
         table.onDeleteForever = { [weak self] in self?.deleteForever(nil) }
         table.onRename = { [weak self] in self?.renameSelected(nil) }
+        table.onSlowClickRename = { [weak self] i in self?.beginInlineRename(at: i) }
         table.onQuickLook = { [weak self] in self?.quickLook(nil) }
         table.onProperties = { [weak self] in self?.showInfo(nil) }
         table.onBack = { [weak self] in self?.goBack(nil) }
@@ -293,6 +294,7 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
         collection.onTrash = { [weak self] in self?.trashSelected(nil) }
         collection.onDeleteForever = { [weak self] in self?.deleteForever(nil) }
         collection.onRename = { [weak self] in self?.renameSelected(nil) }
+        collection.onSlowClickRename = { [weak self] i in self?.beginInlineRename(at: i) }
         collection.onQuickLook = { [weak self] in self?.quickLook(nil) }
         collection.onProperties = { [weak self] in self?.showInfo(nil) }
         collection.onBack = { [weak self] in self?.goBack(nil) }
@@ -447,6 +449,7 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
 
     /// Đổi chế độ xem cho thư mục hiện tại và ghi nhớ (như Windows nhớ theo từng thư mục).
     func setViewMode(_ mode: ViewMode, remember: Bool = true) {
+        renameEditor?.cancel()
         let keep = selectionIndexes
         let hadFocus = view.window?.firstResponder === table || view.window?.firstResponder === collection
         viewMode = mode
@@ -592,6 +595,8 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
     }
 
     private func reloadListingKeepingState() {
+        // Đang sửa tên tại chỗ: để sau, kẻo danh sách xếp lại dưới ô đang gõ.
+        if renameEditor != nil { reloadAfterRename = true; return }
         guard !isSpecialPage, view.window != nil,
               let fresh = try? DirectoryReader.list(currentPath, showHidden: showHidden) else { return }
         let byPath: ([FileItem]) -> [FileItem] = { $0.sorted { $0.path < $1.path } }
@@ -744,6 +749,7 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
     }
 
     func load(selecting: [String] = []) {
+        renameEditor?.cancel()
         search.stringValue = ""
         searchToken.next()
         searchResults = nil
@@ -882,12 +888,12 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
         }
     }
 
-    private func showError(_ text: String) {
+    private func showError(_ text: String, then: (() -> Void)? = nil) {
         let a = NSAlert()
         a.messageText = L10n.t("errorTitle")
         a.informativeText = text
         a.addButton(withTitle: L10n.t("ok"))
-        if let w = view.window { a.beginSheetModal(for: w) } else { a.runModal() }
+        if let w = view.window { a.beginSheetModal(for: w) { _ in then?() } } else { a.runModal(); then?() }
     }
 
     @objc func goBack(_ sender: Any?) { if history.back() != nil { load() } }
@@ -1390,8 +1396,115 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
         } catch { showError(error.localizedDescription) }
     }
 
+    // MARK: Đổi tên ngay tại chỗ (F2, menu Đổi tên, bấm chậm lần hai lên tên), như File Explorer
+
+    private var renameEditor: InlineRenameEditor?
+    var isRenamingInline: Bool { renameEditor != nil }
+    private var reloadAfterRename = false
+
     @objc func renameSelected(_ sender: Any?) {
-        guard let it = targetItems.first, let window = view.window else { NSSound.beep(); return }
+        guard renameEditor == nil else { return }
+        guard let it = targetItems.first else { NSSound.beep(); return }
+        if !isSpecialPage, let i = items.firstIndex(where: { $0.path == it.path }) {
+            beginInlineRename(at: i)
+        } else {
+            renameWithDialog(it)
+        }
+    }
+
+    /// Mở ô sửa tên trên mục thứ `index`. `text`: chữ gõ dở (khi quay lại sau thông báo lỗi).
+    func beginInlineRename(at index: Int, text: String? = nil) {
+        guard renameEditor == nil, !isSpecialPage, items.indices.contains(index), view.window != nil else { return }
+        let it = items[index]
+        table.slowClick.cancel()
+        collection.slowClick.cancel()
+        selectIndexes(IndexSet(integer: index), scroll: true)
+
+        let host: NSView
+        let frame: NSRect
+        let multiline: Bool
+        if viewMode == .details {
+            let col = table.column(withIdentifier: .init("name"))
+            guard col >= 0 else { renameWithDialog(it); return }
+            table.layoutSubtreeIfNeeded()
+            let r = table.frameOfCell(atColumn: col, row: index)
+            let h: CGFloat = 22
+            frame = NSRect(x: r.minX + 30, y: r.midY - h / 2, width: max(80, r.width - 36), height: h)
+            host = table
+            multiline = false
+        } else {
+            let ip = IndexPath(item: index, section: 0)
+            collection.layoutSubtreeIfNeeded()
+            guard let cell = collection.item(at: ip) as? FileCellItem else { renameWithDialog(it); return }
+            (frame, multiline) = cell.nameEditRect(in: collection)
+            host = collection
+        }
+
+        // Ẩn đuôi tệp (Tùy chọn) thì chỉ sửa phần tên và giữ nguyên đuôi, như Windows.
+        let hiddenExt = Settings.displayName(it) != it.name ? (it.name as NSString).pathExtension : ""
+        let shown = text ?? Settings.displayName(it)
+        let selectLength = text != nil ? (shown as NSString).length
+            : (hiddenExt.isEmpty ? FileNaming.editableLength(it.name, isDirectory: it.isDirectory) : (shown as NSString).length)
+        renameEditor = InlineRenameEditor(path: it.path, text: shown, selectLength: selectLength, frame: frame,
+                                          in: host, multiline: multiline) { [weak self] outcome in
+            guard let self else { return }
+            self.renameEditor = nil
+            var renamed = false
+            if case .commit(let typed) = outcome {
+                renamed = self.commitRename(it, typed: typed, hiddenExt: hiddenExt)
+            }
+            if !renamed, self.reloadAfterRename {
+                self.reloadAfterRename = false
+                self.reloadListingKeepingState()
+            }
+        }
+    }
+
+    /// Đổi tên thật trên đĩa. Trả về true nếu đã đổi (danh sách đã nạp lại).
+    private func commitRename(_ it: FileItem, typed: String, hiddenExt: String) -> Bool {
+        let base = typed.trimmingCharacters(in: .whitespacesAndNewlines).precomposedStringWithCanonicalMapping
+        // Xóa hết tên: giữ tên cũ, như Windows.
+        guard !base.isEmpty else { return false }
+        let newName = hiddenExt.isEmpty ? base : base + "." + hiddenExt
+        guard newName != it.name else { return false }
+        let retry: () -> Void = { [weak self] in
+            guard let self, let i = self.items.firstIndex(where: { $0.path == it.path }) else { return }
+            self.beginInlineRename(at: i, text: base)
+        }
+        switch FileNaming.renameProblem(newName) {
+        case .invalidCharacters?: showError(L10n.t("renameBadChars"), then: retry); return false
+        case .reserved?: showError(L10n.f("renameReserved", newName), then: retry); return false
+        case .tooLong?: showError(L10n.t("renameTooLong"), then: retry); return false
+        case nil: break
+        }
+        let dest = ((it.path as NSString).deletingLastPathComponent as NSString).appendingPathComponent(newName)
+        var src = stat(), dst = stat()
+        if lstat(dest, &dst) == 0 {
+            // Chỉ đổi chữ hoa/thường trên ổ không phân biệt hoa thường: cùng một tệp, đổi trực tiếp.
+            guard lstat(it.path, &src) == 0, src.st_ino == dst.st_ino, src.st_dev == dst.st_dev else {
+                showError(L10n.f("renameExists", newName), then: retry)
+                return false
+            }
+            if rename(it.path, dest) != 0 {
+                showError(String(cString: strerror(errno)), then: retry)
+                return false
+            }
+        } else {
+            do { try FileManager.default.moveItem(atPath: it.path, toPath: dest) } catch {
+                showError(error.localizedDescription, then: retry)
+                return false
+            }
+        }
+        reloadAfterRename = false
+        // Giữ lựa chọn hiện tại (bấm sang mục khác thì chọn mục đó), đổi đường dẫn cũ thành mới.
+        let sel = selectedItems.map { $0.path == it.path ? dest : $0.path }
+        load(selecting: sel.isEmpty ? [dest] : sel)
+        return true
+    }
+
+    /// Hộp thoại đổi tên cũ, chỉ dùng khi không sửa tại chỗ được (như mục trên trang Máy Mac này).
+    private func renameWithDialog(_ it: FileItem) {
+        guard let window = view.window else { NSSound.beep(); return }
         let a = NSAlert()
         a.messageText = L10n.f("renameTitle", it.name)
         let field = NSTextField(string: it.name)
@@ -1410,11 +1523,8 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
                 self.load(selecting: [dest])
             } catch { self.showError(error.localizedDescription) }
         }
-        // Chọn sẵn phần tên, không chọn phần mở rộng, giống Windows.
         DispatchQueue.main.async {
-            let ext = (it.name as NSString).pathExtension
-            let len = it.isDirectory || ext.isEmpty ? (it.name as NSString).length : (it.name as NSString).length - (ext as NSString).length - 1
-            field.currentEditor()?.selectedRange = NSRange(location: 0, length: max(0, len))
+            field.currentEditor()?.selectedRange = NSRange(location: 0, length: FileNaming.editableLength(it.name, isDirectory: it.isDirectory))
         }
     }
 
@@ -2028,4 +2138,10 @@ final class SearchToken: @unchecked Sendable {
         value += 1
         return value
     }
+}
+
+/// Đang sửa tên tại chỗ: tắt các lệnh của tab (Thùng rác, Mở, Sao chép tệp…) để phím tắt như Cmd+⌫
+/// đi vào ô chữ chứ không tác động lên tệp. Lệnh chữ (cắt, chép, dán, chọn hết) do ô chữ xử lý trước.
+extension BrowserViewController: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { !isRenamingInline }
 }
