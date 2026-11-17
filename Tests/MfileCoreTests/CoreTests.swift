@@ -386,8 +386,26 @@ final class CloudStatusTests: XCTestCase {
         let cur = URLUbiquitousItemDownloadingStatus.current.rawValue
         XCTAssertEqual(CloudStatus.from(downloading: nd, isDownloading: false, isUploading: false, isUploaded: true, hasError: false), .onlineOnly)
         XCTAssertEqual(CloudStatus.from(downloading: cur, isDownloading: false, isUploading: false, isUploaded: true, hasError: false), .local)
-        XCTAssertEqual(CloudStatus.from(downloading: cur, isDownloading: false, isUploading: true, isUploaded: false, hasError: false), .syncing)
+        XCTAssertEqual(CloudStatus.from(downloading: cur, isDownloading: false, isUploading: true, isUploaded: false, hasError: false), .uploading)
+        XCTAssertEqual(CloudStatus.from(downloading: cur, isDownloading: false, isUploading: false, isUploaded: false, hasError: false), .syncing)
         XCTAssertEqual(CloudStatus.from(downloading: nd, isDownloading: false, isUploading: false, isUploaded: true, hasError: true), .error)
+        // Đang tải xuống: kể cả khi vừa bấm tải mà hệ thống chưa bắt đầu.
+        XCTAssertEqual(CloudStatus.from(downloading: nd, isDownloading: true, isUploading: false, isUploaded: true), .downloading)
+        XCTAssertEqual(CloudStatus.from(downloading: nd, isDownloading: false, downloadRequested: true, isUploading: false, isUploaded: true), .downloading)
+        // Tệp vừa tạo trong thư mục đồng bộ: lỗi tạm thời của dịch vụ không được hiện thành dấu chấm than.
+        let notYet = CloudStatus.ErrorKind(domain: "NSFileProviderErrorDomain", code: -1005)
+        XCTAssertEqual(CloudStatus.from(downloading: cur, isDownloading: false, isUploading: false, isUploaded: false,
+                                        uploadError: notYet, modifiedSecondsAgo: 3600), .syncing)
+        let quota = CloudStatus.ErrorKind(domain: "NSFileProviderErrorDomain", code: -1003)
+        XCTAssertEqual(CloudStatus.from(downloading: cur, isDownloading: false, isUploading: false, isUploaded: false,
+                                        uploadError: quota, modifiedSecondsAgo: 5), .syncing)
+        XCTAssertEqual(CloudStatus.from(downloading: cur, isDownloading: false, isUploading: false, isUploaded: false,
+                                        uploadError: quota, modifiedSecondsAgo: 3600), .error)
+        // Đang tải lên thì hiện tiến trình, không hiện lỗi cũ.
+        XCTAssertEqual(CloudStatus.from(downloading: cur, isDownloading: false, isUploading: true, isUploaded: false,
+                                        uploadError: quota, modifiedSecondsAgo: 3600), .uploading)
+        XCTAssertTrue(CloudStatus.syncing.isTransient)
+        XCTAssertFalse(CloudStatus.local.isTransient)
         XCTAssertTrue(CloudStatus.isCloudPath("/Users/a/Library/CloudStorage/OneDrive-Personal/x", home: "/Users/a"))
         XCTAssertFalse(CloudStatus.isCloudPath("/Users/a/Documents", home: "/Users/a"))
     }

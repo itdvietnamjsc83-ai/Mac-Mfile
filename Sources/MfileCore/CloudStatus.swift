@@ -3,16 +3,32 @@ import Foundation
 /// Cột "Trạng thái" như OneDrive trên Windows: tệp chỉ có trên đám mây, có sẵn trên máy, hay đang đồng bộ.
 /// Áp dụng cho iCloud Drive và các ổ dùng File Provider của macOS (OneDrive, Google Drive, Dropbox…).
 public enum CloudStatus: String, Sendable {
-    case onlineOnly, local, syncing, error
+    /// Chỉ có trên đám mây (biểu tượng đám mây).
+    case onlineOnly
+    /// Có sẵn trên máy, đã đồng bộ (dấu tích xanh).
+    case local
+    /// Đang tải xuống từ đám mây.
+    case downloading
+    /// Đang tải lên đám mây.
+    case uploading
+    /// Có thay đổi trên máy đang chờ tải lên (tệp vừa tạo, vừa sửa).
+    case syncing
+    /// Lỗi đồng bộ thật sự (dịch vụ từ chối tệp, hết dung lượng…).
+    case error
 
     public var l10nKey: String {
         switch self {
         case .onlineOnly: return "syncOnlineOnly"
         case .local: return "syncLocal"
+        case .downloading: return "syncDownloading"
+        case .uploading: return "syncUploading"
         case .syncing: return "syncPending"
         case .error: return "syncError"
         }
     }
+
+    /// Trạng thái đang chuyển tiếp: cần kiểm tra lại thường xuyên cho tới khi xong.
+    public var isTransient: Bool { self == .downloading || self == .uploading || self == .syncing }
 
     /// Thư mục nằm trong vùng đám mây thì mới hiện cột Trạng thái.
     public static func isCloudPath(_ path: String, home: String = NSHomeDirectory()) -> Bool {
@@ -22,26 +38,90 @@ public enum CloudStatus: String, Sendable {
     public static let resourceKeys: Set<URLResourceKey> = [
         .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey, .ubiquitousItemIsDownloadingKey,
         .ubiquitousItemIsUploadingKey, .ubiquitousItemIsUploadedKey, .ubiquitousItemUploadingErrorKey,
-        .ubiquitousItemDownloadingErrorKey,
+        .ubiquitousItemDownloadingErrorKey, .ubiquitousItemDownloadRequestedKey, .contentModificationDateKey,
     ]
 
+    /// Kết quả đọc trạng thái, kèm mô tả lỗi (nếu có) để hiện khi rê chuột.
+    public struct Info: Equatable, Sendable {
+        public let status: CloudStatus
+        public let detail: String?
+        public init(status: CloudStatus, detail: String? = nil) { self.status = status; self.detail = detail }
+    }
+
     /// Suy ra trạng thái từ thuộc tính hệ thống của tệp; nil nếu tệp không thuộc ổ đám mây.
-    public static func of(_ path: String) -> CloudStatus? {
+    public static func of(_ path: String) -> CloudStatus? { info(path)?.status }
+
+    /// Đọc trạng thái mới nhất. Mỗi lần tạo URL mới nên macOS không trả lại giá trị đã lưu đệm từ lần trước.
+    public static func info(_ path: String, now: Date = Date()) -> Info? {
         let url = URL(fileURLWithPath: path)
         guard let v = try? url.resourceValues(forKeys: resourceKeys), v.isUbiquitousItem == true else { return nil }
-        return from(downloading: v.ubiquitousItemDownloadingStatus?.rawValue,
-                    isDownloading: v.ubiquitousItemIsDownloading ?? false,
-                    isUploading: v.ubiquitousItemIsUploading ?? false,
-                    isUploaded: v.ubiquitousItemIsUploaded ?? true,
-                    hasError: v.ubiquitousItemUploadingError != nil || v.ubiquitousItemDownloadingError != nil)
+        let upErr = v.ubiquitousItemUploadingError
+        let downErr = v.ubiquitousItemDownloadingError
+        let status = from(downloading: v.ubiquitousItemDownloadingStatus?.rawValue,
+                          isDownloading: v.ubiquitousItemIsDownloading ?? false,
+                          downloadRequested: v.ubiquitousItemDownloadRequested ?? false,
+                          isUploading: v.ubiquitousItemIsUploading ?? false,
+                          isUploaded: v.ubiquitousItemIsUploaded ?? true,
+                          uploadError: upErr.map { ErrorKind(domain: $0.domain, code: $0.code) },
+                          downloadError: downErr.map { ErrorKind(domain: $0.domain, code: $0.code) },
+                          modifiedSecondsAgo: v.contentModificationDate.map { now.timeIntervalSince($0) })
+        let err = (downErr ?? upErr).map { "\($0.localizedDescription) (\($0.domain) \($0.code))" }
+        return Info(status: status, detail: status == .error ? err : nil)
+    }
+
+    /// Mã lỗi đồng bộ, tách khỏi NSError để kiểm thử.
+    public struct ErrorKind: Equatable, Sendable {
+        public let domain: String
+        public let code: Int
+        public init(domain: String, code: Int) { self.domain = domain; self.code = code }
+
+        /// Lỗi tạm thời khi tệp vừa tạo hoặc mất mạng: dịch vụ chưa nhận tệp, máy chủ chưa liên lạc được.
+        /// Những lỗi này tự hết khi đồng bộ xong, nên hiện "Đang chờ đồng bộ" thay cho dấu chấm than.
+        public var isTransient: Bool {
+            switch domain {
+            case "NSFileProviderErrorDomain":
+                // -1004 serverUnreachable, -1005 noSuchItem (dịch vụ chưa biết tệp mới),
+                // -1002 syncAnchorExpired, -2003 pageExpired, -2005 cannotSynchronize (đang thử lại),
+                // -2006 providerNotFound / -2007 providerTranslocated (dịch vụ đang khởi động),
+                // -2008 olderExtensionVersionRunning, -2009 newerExtensionVersionFound.
+                return [-1004, -1005, -1002, -2003, -2005, -2006, -2007, -2008, -2009].contains(code)
+            case NSCocoaErrorDomain:
+                // 4353 NSUbiquitousFileUnavailableError, 4355 NSUbiquitousFileUbiquityServerNotAvailable.
+                return code == 4353 || code == 4355
+            case NSURLErrorDomain:
+                return true
+            default:
+                return false
+            }
+        }
     }
 
     /// Phần quyết định, tách riêng để kiểm thử.
-    public static func from(downloading: String?, isDownloading: Bool, isUploading: Bool, isUploaded: Bool, hasError: Bool) -> CloudStatus {
-        if hasError { return .error }
-        if isDownloading || isUploading || !isUploaded { return .syncing }
-        if downloading == URLUbiquitousItemDownloadingStatus.notDownloaded.rawValue { return .onlineOnly }
+    /// `modifiedSecondsAgo`: tệp vừa sửa/vừa tạo trong 2 phút thì lỗi tải lên được coi là đang chờ, chưa phải lỗi.
+    public static func from(downloading: String?, isDownloading: Bool, downloadRequested: Bool = false,
+                            isUploading: Bool, isUploaded: Bool,
+                            uploadError: ErrorKind? = nil, downloadError: ErrorKind? = nil,
+                            modifiedSecondsAgo: TimeInterval? = nil) -> CloudStatus {
+        let notDownloaded = downloading == URLUbiquitousItemDownloadingStatus.notDownloaded.rawValue
+        // Đang chạy thì ưu tiên hiện tiến trình, kể cả khi còn sót lỗi của lần thử trước.
+        if isDownloading { return .downloading }
+        if isUploading { return .uploading }
+        if let e = downloadError, !e.isTransient { return .error }
+        if let e = uploadError {
+            let fresh = (modifiedSecondsAgo ?? .infinity) < 120
+            return e.isTransient || fresh ? .syncing : .error
+        }
+        // Đã bấm tải về nhưng hệ thống chưa bắt đầu: vẫn là đang tải xuống.
+        if notDownloaded && downloadRequested { return .downloading }
+        if !isUploaded { return .syncing }
+        if notDownloaded { return .onlineOnly }
         return .local
+    }
+
+    /// Bản cũ (giữ cho mã gọi cũ và kiểm thử).
+    public static func from(downloading: String?, isDownloading: Bool, isUploading: Bool, isUploaded: Bool, hasError: Bool) -> CloudStatus {
+        from(downloading: downloading, isDownloading: isDownloading, isUploading: isUploading, isUploaded: isUploaded,
+             uploadError: hasError ? ErrorKind(domain: "test", code: 1) : nil)
     }
 }
 
