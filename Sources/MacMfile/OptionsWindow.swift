@@ -182,6 +182,14 @@ final class OptionsWindowController: NSWindowController, NSWindowDelegate, NSTab
             let a: Theme.Appearance = [.system, .light, .dark][i]
             if Theme.appearance != a { Theme.appearance = a }
         }
+        popup(0, "textSize", "textSizeSub", items: ["textSizeSmall", "textSizeNormal", "textSizeLarge", "textSizeLarger", "textSizeLargest"],
+              selected: Theme.textScales.firstIndex { abs($0 - Double(Theme.textScale)) < 0.01 } ?? 1) { i in
+            let v = Theme.textScales[i]
+            guard abs(v - Double(Theme.textScale)) > 0.01 else { return }
+            UserDefaults.standard.set(v, forKey: Theme.textScaleKey)
+            // Dựng lại các cửa sổ để chữ, hàng và biểu tượng theo cỡ mới (giữ nguyên vị trí, kích thước, các tab).
+            DispatchQueue.main.async { (NSApp.delegate as? AppDelegate)?.rebuildWindows() }
+        }
         popup(0, "density", "densitySub", items: ["densityComfort", "densityCompact"], selected: UserDefaults.standard.bool(forKey: "MacMfile.compact") ? 1 : 0) {
             UserDefaults.standard.set($0 == 1, forKey: "MacMfile.compact")
         }

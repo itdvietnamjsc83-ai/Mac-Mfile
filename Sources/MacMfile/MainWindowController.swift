@@ -27,7 +27,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             window.standardWindowButton(b)?.isHidden = true
         }
         window.backgroundColor = Theme.chrome
-        window.appearance = NSAppearance(named: .aqua)
+        // Không ép giao diện Sáng cho cửa sổ: để theo NSApp.appearance (nút ☀/☾, Tùy chọn).
         super.init(window: window)
         window.delegate = self
         buildContent()
@@ -49,6 +49,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         tabStack.orientation = .horizontal
         tabStack.spacing = 2
         tabStack.alignment = .bottom
+        tabStack.distribution = .fillEqually
+        tabStack.setClippingResistancePriority(NSLayoutConstraint.Priority(200), for: .horizontal)
         tabStack.translatesAutoresizingMaskIntoConstraints = false
         strip.addSubview(tabStack)
         let plus = FlatButton(title: "", symbol: "plus", target: self, action: #selector(newTab(_:)))
@@ -145,7 +147,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let width: CGFloat = tabs.count > 5 ? max(120, 1000 / CGFloat(tabs.count)) : 220
         for (i, b) in tabs.enumerated() {
             let t = TabItemView(controller: self, index: i, title: b.title ?? "", path: b.currentPath, active: i == activeIndex)
-            t.widthAnchor.constraint(equalToConstant: width).isActive = true
+            // Nhiều tab trên cửa sổ hẹp: tab co lại (như Windows), không đẩy cửa sổ giãn ra.
+            t.widthAnchor.constraint(lessThanOrEqualToConstant: width).isActive = true
+            let w = t.widthAnchor.constraint(equalToConstant: width)
+            w.priority = NSLayoutConstraint.Priority(700)
+            w.isActive = true
+            t.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             tabStack.addArrangedSubview(t)
         }
         if tabs.indices.contains(activeIndex) { window?.title = tabs[activeIndex].title ?? "" }

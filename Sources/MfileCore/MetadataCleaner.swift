@@ -13,7 +13,7 @@ public enum MetadataCleaner {
 
     public static func canClean(_ path: String) -> Bool {
         let ext = (path as NSString).pathExtension.lowercased()
-        return imageExts.contains(ext) || ext == "pdf"
+        return imageExts.contains(ext) || ext == "pdf" || OfficeMetadata.extensions.contains(ext)
     }
 
     /// Thuộc tính mở rộng mang dấu vết cá nhân (nguồn tải xuống, ghi chú Finder). Không đụng tới cờ cách ly bảo mật.
@@ -27,6 +27,13 @@ public enum MetadataCleaner {
         let ext = (src as NSString).pathExtension.lowercased()
         if imageExts.contains(ext) { try cleanImage(src, to: dst) }
         else if ext == "pdf" { try cleanPDF(src, to: dst) }
+        else if OfficeMetadata.extensions.contains(ext) {
+            #if os(macOS)
+            try OfficeMetadata.clean(src, to: dst)
+            #else
+            throw CleanError.unsupported
+            #endif
+        }
         else { throw CleanError.unsupported }
         removePersonalXattrs(dst)
     }

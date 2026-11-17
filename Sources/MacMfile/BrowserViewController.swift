@@ -5,7 +5,7 @@ import MfileCore
 
 /// Một tab duyệt thư mục: nút điều hướng, thanh địa chỉ, ô tìm kiếm, thanh lệnh, ngăn điều hướng,
 /// vùng nội dung chế độ Chi tiết và thanh trạng thái (9 vùng ở Mục 4).
-final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate,
+final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTableViewDataSource, NSTableViewDelegate,
     NSTextFieldDelegate, NSSearchFieldDelegate, NSMenuDelegate, QLPreviewPanelDataSource,
     NSCollectionViewDataSource, NSCollectionViewDelegate {
 
@@ -42,13 +42,29 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     private let langButton = FlatButton(title: "VI", symbol: nil, target: nil, action: nil)
     private var backB: FlatButton!, fwdB: FlatButton!, upB: FlatButton!, refreshB: FlatButton!
     private var commandButtons: [(FlatButton, String)] = []
+    private weak var commandBar: CollapsingBar?
     private var messageTimer: Timer?
+    /// Tự làm mới danh sách khi thư mục đang xem thay đổi (tệp mới, đổi tên, xóa).
+    private let folderWatcher = FolderWatcher()
+    /// Trạng thái đồng bộ đã đọc của các mục đang xem (đường dẫn → trạng thái), đọc lại định kỳ ở luồng nền.
+    private var cloudInfo: [String: CloudStatus.Info] = [:]
+    private var cloudTimer: Timer?
+    private var cloudTick = 0
+    /// Sau khi bấm tải về/giải phóng: kiểm tra mỗi giây cho tới mốc này.
+    private var cloudFastUntil = Date.distantPast
+    private var cloudScanning = false
+    private let cloudQueue = DispatchQueue(label: "MacMfile.cloudStatus", qos: .utility)
 
     init(startPath: String) {
         history = NavigationHistory(start: startPath)
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        cloudTimer?.invalidate()
+        folderWatcher.stop()
+    }
 
     // MARK: Dựng giao diện
 
@@ -66,7 +82,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         body.addArrangedSubview(buildTable())
         body.addArrangedSubview(sidePane.view)
         self.body = body
-        sidebar.scroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
+        body.delegate = self
+        sidebar.scroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
         let statusBar = buildStatusBar()
 
         for v in [nav, cmd, body, statusBar] { root.addSubview(v) }
@@ -89,19 +106,22 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             statusBar.heightAnchor.constraint(equalToConstant: 24),
         ])
         view = root
-        body.setPosition(220, ofDividerAt: 0)
+        // Ngăn điều hướng giữ nguyên bề rộng, vùng nội dung nhận phần dư khi cửa sổ to ra (như Windows 11).
+        body.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)
+        body.setHoldingPriority(NSLayoutConstraint.Priority(200), forSubviewAt: 1)
+        body.setHoldingPriority(NSLayoutConstraint.Priority(270), forSubviewAt: 2)
+        sidebar.scroll.widthAnchor.constraint(lessThanOrEqualToConstant: 720).isActive = true
 
         setupHelp()
         sidebar.onSelect = { [weak self] p in self?.navigate(to: p) }
+        folderWatcher.onChange = { [weak self] in self?.folderDidChange() }
         sidebar.onOpenNewWindow = { p in (NSApp.delegate as? AppDelegate)?.openWindow(at: p) }
         sidebar.onOpenNewTab = { [weak self] p in (self?.view.window?.windowController as? MainWindowController)?.addTab(path: p) }
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: L10n.didChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(settingsChanged), name: Settings.didChange, object: nil)
         reloadTexts()
         setViewMode(viewPrefs.mode(for: currentPath), remember: false)
-        if let k = UserDefaults.standard.string(forKey: "MacMfile.sidePane").flatMap(SidePaneKind.init(rawValue:)), k != .none {
-            DispatchQueue.main.async { self.showPane(k) }
-        }
+        // Ngăn Chi tiết luôn ẩn khi mở ứng dụng; bấm "Chi tiết" mới hiện (Dũng, 11/11/2026).
         load()
     }
 
@@ -140,6 +160,10 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         stack.translatesAutoresizingMaskIntoConstraints = false
         bar.pin(stack, insets: .init(top: 7, left: 10, bottom: 7, right: 10))
         address.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // Kích thước cửa sổ chỉ đổi khi người dùng kéo: nội dung dài (đường dẫn sâu) không được đẩy cửa sổ giãn ra.
+        // Ô địa chỉ co lại trước tiên; nút Quay lại/Tiến/Lên/Làm mới và ô tìm kiếm luôn hiện đủ.
+        address.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        for v in [backB!, fwdB!, upB!, refreshB!, search] { v.setContentCompressionResistancePriority(.required, for: .horizontal) }
         bar.addSubview(breadcrumb)
         NSLayoutConstraint.activate([
             breadcrumb.leadingAnchor.constraint(equalTo: address.leadingAnchor, constant: 2),
@@ -153,7 +177,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     private func buildCommandBar() -> NSView {
-        let bar = ColorView(Theme.chrome)
+        let bar = CollapsingBar(Theme.chrome)
         bar.bottomBorder = true
         func b(_ key: String, _ symbol: String, _ sel: Selector) -> FlatButton {
             let x = FlatButton(title: L10n.t(key), symbol: symbol, target: self, action: sel)
@@ -184,10 +208,16 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         let stack = NSStackView(views: views)
         stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
+        // Cửa sổ hẹp: các nút cuối thanh lệnh được gom vào "Xem thêm (…)", không đẩy cửa sổ giãn ra.
+        stack.setClippingResistancePriority(NSLayoutConstraint.Priority(200), for: .horizontal)
         bar.addSubview(stack)
         // Nút "Chi tiết" ở góc phải thanh lệnh như Windows 11: bật/tắt ngăn chi tiết.
         paneButton = b("details", "sidebar.right", #selector(toggleDetailsPane(_:)))
         bar.addSubview(paneButton)
+        bar.collapsible = Array(views.dropLast())
+        bar.moreButton = views.last
+        bar.trailingFixed = paneButton
+        commandBar = bar
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 10),
             stack.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
@@ -199,15 +229,20 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     private func buildTable() -> NSView {
-        let columns: [(String, String, CGFloat)] = [("name", "colName", 380), ("folder", "colFolder", 220), ("modified", "colModified", 150), ("type", "colType", 140), ("size", "colSize", 90)]
+        let columns: [(String, String, CGFloat)] = [("name", "colName", 380), ("status", "colStatus", 70), ("folder", "colFolder", 220), ("modified", "colModified", 150), ("type", "colType", 140), ("size", "colSize", 90)]
         for (id, _, w) in columns {
             let c = NSTableColumn(identifier: .init(id))
             c.width = w
             c.minWidth = 60
-            c.sortDescriptorPrototype = id == "folder" ? nil : NSSortDescriptor(key: id, ascending: true)
-            c.isHidden = id == "folder"
+            c.sortDescriptorPrototype = ["folder", "status"].contains(id) ? nil : NSSortDescriptor(key: id, ascending: true)
+            c.isHidden = id == "folder" || id == "status"
             table.addTableColumn(c)
         }
+        // Cột giữ đúng bề rộng người dùng kéo, không chia lại cho các cột khác; tổng rộng hơn khung thì cuộn ngang
+        // (như File Explorer). Kiểu mặc định co các cột khác để vừa khung nên ở cửa sổ hẹp cột Tên không kéo rộng ra được.
+        table.columnAutoresizingStyle = .noColumnAutoresizing
+        table.autosaveName = "MacMfile.detailsColumns"
+        table.autosaveTableColumns = true
         table.rowHeight = Theme.rowHeight
         table.allowsMultipleSelection = true
         table.usesAlternatingRowBackgroundColors = false
@@ -234,6 +269,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         let scroll = NSScrollView()
         scroll.documentView = table
         scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = true
+        scroll.autohidesScrollers = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
         tableScroll = scroll
 
@@ -282,20 +319,69 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         return container
     }
 
+    /// Số điểm màn hình ứng với một milimét thật (tính từ kích thước vật lý của màn hình).
+    static func pointsPerMM(on screen: NSScreen?) -> CGFloat {
+        let fallback: CGFloat = 4.8
+        guard let screen = screen ?? NSScreen.main,
+              let num = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return fallback }
+        let mm = CGDisplayScreenSize(CGDirectDisplayID(num.uint32Value)).width
+        guard mm > 50 else { return fallback }
+        return screen.frame.width / mm
+    }
+
+    /// Ngăn điều hướng: mặc định khoảng 4,8 cm thật (Dũng, 11/11/2026: bằng 60% mức 8 cm của bản trước),
+    /// mỗi lần mở đều trở về mức này; người dùng kéo rộng hoặc hẹp khi cần.
+    static func defaultSidebarWidth(on screen: NSScreen?) -> CGFloat {
+        min(max((48 * pointsPerMM(on: screen)).rounded(), 180), 400)
+    }
+
+    /// Ngăn chi tiết / xem trước bên phải: mặc định khoảng 4 cm, kéo hẹp được tới khoảng 2 cm.
+    static func defaultPaneWidth(on screen: NSScreen?) -> CGFloat {
+        min(max((40 * pointsPerMM(on: screen)).rounded(), 150), 320)
+    }
+    static func minPaneWidth(on screen: NSScreen?) -> CGFloat {
+        min(max((20 * pointsPerMM(on: screen)).rounded(), 72), 160)
+    }
+
+    /// Bề rộng tối thiểu của ngăn Chi tiết, chỉ bật khi ngăn đang hiện (ngăn ẩn thì thu hẳn về 0, không để lại khoảng trống).
+    /// Dùng ràng buộc thay cho hàm giới hạn vị trí vạch chia của delegate, vì hàm đó làm NSSplitView bỏ qua mức giữ bề rộng.
+    private lazy var paneMinWidth: NSLayoutConstraint = sidePane.view.widthAnchor.constraint(greaterThanOrEqualToConstant: 72)
+
+    /// Đặt bề rộng ngăn điều hướng khi khung đã có kích thước thật; đặt trong loadView thì bị bỏ qua vì lúc đó bề rộng còn 0.
+    private var didPlaceDividers = false
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        guard !didPlaceDividers, body.bounds.width > 500 else { return }
+        didPlaceDividers = true
+        body.setPosition(Self.defaultSidebarWidth(on: view.window?.screen), ofDividerAt: 0)
+        let w = body.bounds.width
+        body.setPosition(sidePane.kind == .none ? w : max(400, w - Self.defaultPaneWidth(on: view.window?.screen)), ofDividerAt: 1)
+    }
+
     // MARK: Ngăn chi tiết / xem trước (FR-07)
 
     var paneKind: SidePaneKind { sidePane.kind }
 
     func showPane(_ k: SidePaneKind) {
         let newKind = sidePane.kind == k ? SidePaneKind.none : k
+        let wasOpen = sidePane.kind != .none
+        if newKind == .none { paneMinWidth.isActive = false }
         sidePane.show(newKind)
-        UserDefaults.standard.set(newKind.rawValue, forKey: "MacMfile.sidePane")
         paneButton.isActive = newKind == .details
-        if newKind == .help { UserDefaults.standard.set(SidePaneKind.none.rawValue, forKey: "MacMfile.sidePane") }
         sidePane.update(selection: selectedItems, folder: currentPath)
         body.layoutSubtreeIfNeeded()
         let w = body.bounds.width
-        body.setPosition(newKind == .none ? w : max(400, w - 300), ofDividerAt: 1)
+        if newKind == .none {
+            body.setPosition(w, ofDividerAt: 1)
+        } else {
+            // Mỗi lần bấm hiện ngăn: khoảng 4 cm. Đổi qua lại Chi tiết / Xem trước thì giữ bề rộng người dùng đã kéo.
+            if !wasOpen {
+                let sidebarRight = body.subviews.first?.frame.maxX ?? 0
+                body.setPosition(max(sidebarRight + 200, w - Self.defaultPaneWidth(on: view.window?.screen)), ofDividerAt: 1)
+            }
+            paneMinWidth.constant = Self.minPaneWidth(on: view.window?.screen)
+            paneMinWidth.isActive = true
+        }
     }
 
     @objc func toggleDetailsPane(_ sender: Any?) { showPane(.details) }
@@ -368,7 +454,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         let isTable = mode == .details
         tableScroll.isHidden = !isTable || isSpecialPage
         collectionScroll.isHidden = isTable || isSpecialPage
-        table.rowHeight = compact ? 24 : Theme.rowHeight
+        table.rowHeight = compact ? (24 * max(1, Theme.textScale)).rounded() : Theme.rowHeight
         updateFlowLayout()
         reloadContent()
         selectIndexes(keep, scroll: true)
@@ -403,8 +489,10 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         flow.invalidateLayout()
     }
 
+    /// Nạp lại cả bảng Chi tiết lẫn lưới biểu tượng (lưới đang ẩn cũng nạp) để hai bên luôn khớp với `items`.
     private func reloadContent() {
-        if viewMode == .details { table.reloadData() } else { collection.reloadData() }
+        table.reloadData()
+        collection.reloadData()
     }
 
     /// Chỉ số các mục đang chọn, dùng chung cho bảng Chi tiết và các chế độ biểu tượng.
@@ -482,9 +570,103 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         let stack = NSStackView(views: [status, message, NSView(), langButton, themeButton, detailsToggle, iconsToggle])
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
+        // Chữ trạng thái co lại (cắt bớt); các nút VI/EN, sáng/tối, kiểu xem bên phải luôn hiện.
+        for v in [status, message] {
+            v.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+            v.lineBreakMode = .byTruncatingTail
+        }
         bar.pin(stack, insets: .init(top: 0, left: 12, bottom: 0, right: 8))
         for b in [langButton, detailsToggle!, iconsToggle!, themeButton!] { b.fixedHeight.constant = 22 }
         return bar
+    }
+
+    // MARK: Tự làm mới và trạng thái đồng bộ
+
+    /// Thư mục đang xem vừa thay đổi: đọc lại danh sách, giữ nguyên lựa chọn, vị trí cuộn và ô tìm kiếm.
+    private func folderDidChange() {
+        reloadListingKeepingState()
+        if cloudTimer != nil {
+            cloudFastUntil = max(cloudFastUntil, Date().addingTimeInterval(10))
+            rescanCloudStatus()
+        }
+    }
+
+    private func reloadListingKeepingState() {
+        guard !isSpecialPage, view.window != nil,
+              let fresh = try? DirectoryReader.list(currentPath, showHidden: showHidden) else { return }
+        let byPath: ([FileItem]) -> [FileItem] = { $0.sorted { $0.path < $1.path } }
+        guard byPath(fresh) != byPath(allItems) else { return }
+        let sel = Set(selectedItems.map(\.path))
+        let origin = tableScroll.contentView.bounds.origin
+        allItems = fresh
+        applySortAndFilter()
+        selectIndexes(IndexSet(items.indices.filter { sel.contains(items[$0].path) }))
+        tableScroll.contentView.scroll(to: origin)
+        tableScroll.reflectScrolledClipView(tableScroll.contentView)
+        updateStatus()
+        sidePane.update(selection: selectedItems, folder: currentPath)
+    }
+
+    /// Trạng thái của một mục: lấy bản đã đọc, chưa có thì đọc ngay.
+    private func cloudStatusInfo(for path: String) -> CloudStatus.Info? {
+        if let i = cloudInfo[path] { return i }
+        let i = CloudStatus.info(path)
+        cloudInfo[path] = i
+        return i
+    }
+
+    /// Chỉ theo dõi khi đang ở trong ổ đám mây (iCloud, OneDrive, Google Drive…).
+    private func updateCloudMonitoring() {
+        let active = !isSpecialPage && CloudStatus.isCloudPath(currentPath + "/")
+        guard active else { cloudTimer?.invalidate(); cloudTimer = nil; return }
+        guard cloudTimer == nil else { return }
+        let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.cloudTimerFired() }
+        RunLoop.main.add(t, forMode: .common)
+        cloudTimer = t
+    }
+
+    /// Mỗi giây khi có mục đang tải xuống/tải lên/chờ đồng bộ (hoặc vừa bấm lệnh đám mây); bình thường 4 giây một lần
+    /// để bắt cả thay đổi do dịch vụ đám mây hay ứng dụng khác gây ra.
+    private func cloudTimerFired() {
+        guard view.window != nil, !cloudScanning else { return }
+        cloudTick += 1
+        let fast = Date() < cloudFastUntil || cloudInfo.values.contains { $0.status.isTransient }
+        guard fast || cloudTick % 4 == 0 else { return }
+        rescanCloudStatus()
+    }
+
+    /// Đọc lại trạng thái mọi mục đang hiện ở luồng nền, chỉ vẽ lại những dòng đã đổi.
+    private func rescanCloudStatus() {
+        guard cloudTimer != nil, !cloudScanning else { return }
+        let paths = Array(items.prefix(5000).map(\.path))
+        guard !paths.isEmpty else { return }
+        cloudScanning = true
+        let folder = currentPath
+        cloudQueue.async { [weak self] in
+            var fresh: [String: CloudStatus.Info] = [:]
+            for p in paths { if let i = CloudStatus.info(p) { fresh[p] = i } }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.cloudScanning = false
+                guard folder == self.currentPath else { return }
+                self.applyCloudInfo(fresh, paths: paths)
+            }
+        }
+    }
+
+    private func applyCloudInfo(_ fresh: [String: CloudStatus.Info], paths: [String]) {
+        var changed: [String] = []
+        for p in paths where cloudInfo[p] != fresh[p] {
+            cloudInfo[p] = fresh[p]
+            changed.append(p)
+        }
+        guard !changed.isEmpty else { return }
+        // Tải xong thì kích thước, ngày sửa có thể đổi: đọc lại danh sách rồi vẽ lại các dòng đổi trạng thái.
+        reloadListingKeepingState()
+        let set = Set(changed)
+        let rows = IndexSet(items.indices.filter { set.contains(items[$0].path) })
+        guard !rows.isEmpty, viewMode == .details else { return }
+        table.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns))
     }
 
     // MARK: Ngôn ngữ
@@ -502,7 +684,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         fwdB.toolTip = L10n.t("forward") + " (Cmd+])"
         upB.toolTip = L10n.t("up") + " (Cmd+↑)"
         refreshB.toolTip = L10n.t("refresh") + " (F5)"
-        let headers = ["name": "colName", "folder": "colFolder", "modified": "colModified", "type": "colType", "size": "colSize"]
+        let headers = ["name": "colName", "status": "colStatus", "folder": "colFolder", "modified": "colModified", "type": "colType", "size": "colSize"]
         for c in table.tableColumns { c.title = L10n.t(headers[c.identifier.rawValue] ?? "") }
         if let m = address.menu {
             m.items[0].title = L10n.t("copyAddress")
@@ -563,7 +745,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
 
     func load(selecting: [String] = []) {
         search.stringValue = ""
-        searchGeneration += 1
+        searchToken.next()
         searchResults = nil
         let special = isSpecialPage
         specialPage.scroll.isHidden = !special
@@ -573,11 +755,14 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             allItems = []
             items = []
             reloadContent()
+            folderWatcher.watch(nil)
+            cloudInfo = [:]
+            updateCloudMonitoring()
             specialPage.show(currentPath)
             updateLocationUI()
             sidebar.select(path: currentPath)
             updateStatus()
-            sidePane.update(selection: selectedItems, folder: NSHomeDirectory())
+            sidePane.update(selection: selectedItems, folder: currentPath)
             return
         }
         tableScroll.isHidden = viewMode != .details
@@ -590,7 +775,11 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             allItems = []
             showMessage(error.localizedDescription)
         }
+        folderWatcher.watch(currentPath)
+        cloudInfo = [:]
+        cloudFastUntil = Date().addingTimeInterval(5)
         applySortAndFilter()
+        updateCloudMonitoring()
         if !selecting.isEmpty {
             selectIndexes(IndexSet(items.indices.filter { selecting.contains(items[$0].path) }), scroll: true)
         }
@@ -600,8 +789,11 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
         sidePane.update(selection: selectedItems, folder: currentPath)
     }
 
-    private var searchGeneration = 0
+    /// Bộ đếm lượt tìm, đọc được an toàn từ luồng nền (thay cho việc chờ luồng chính).
+    private let searchToken = SearchToken()
     private var searchResults: [FileItem]?
+    /// Từ khóa của lượt tìm đã xong (bấm Enter lại với cùng từ khóa thì không tìm lại).
+    private var completedQuery: String?
     private var isSearching: Bool { !search.stringValue.trimmingCharacters(in: .whitespaces).isEmpty }
 
     private func applySortAndFilter() {
@@ -611,35 +803,39 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             list = searchResults ?? list.filter { RecursiveSearch.matches($0.name, q) }
         }
         items = FileSorting.sort(list, by: sortKey, ascending: ascending)
-        table.tableColumn(withIdentifier: .init("folder"))?.isHidden = q.isEmpty || !Settings.searchSubfolders
+        // Nạp lại dữ liệu trước rồi mới ẩn/hiện cột: bảng không được hỏi dòng đã không còn trong danh sách.
         reloadContent()
+        let showFolder = !q.isEmpty && Settings.searchSubfolders
+        // Cột Trạng thái đồng bộ chỉ hiện trong ổ đám mây (OneDrive, Google Drive, iCloud…), như Windows.
+        let showStatus = CloudStatus.isCloudPath(currentPath + "/")
+        for (id, show) in [("folder", showFolder), ("status", showStatus)] {
+            if let c = table.tableColumn(withIdentifier: .init(id)), c.isHidden == show { c.isHidden = !show }
+        }
     }
 
     /// Tìm cả thư mục con ở luồng nền (Mục 5.8, bản mẫu bảng 12, 14); gõ tiếp thì hủy lượt cũ.
-    private func startSearch() {
-        searchGeneration += 1
+    /// `immediately`: bấm Enter thì tìm ngay, không chờ người dùng gõ xong.
+    private func startSearch(immediately: Bool = false) {
+        let gen = searchToken.next()
         searchResults = nil
-        let gen = searchGeneration
+        completedQuery = nil
         let q = search.stringValue.trimmingCharacters(in: .whitespaces)
         applySortAndFilter()
         guard !q.isEmpty, Settings.searchSubfolders, !isSpecialPage else { updateStatus(); return }
         status.stringValue = L10n.t("searching")
-        let root = currentPath, hidden = showHidden
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            guard let self, gen == self.generationSnapshot() else { return }
-            let found = RecursiveSearch.run(in: root, query: q, showHidden: hidden) { [weak self] in gen != self?.generationSnapshot() }
-            DispatchQueue.main.async {
-                guard gen == self.searchGeneration else { return }
+        // Luồng nền chỉ giữ dữ liệu cần thiết (thư mục, từ khóa, bộ đếm lượt tìm), không giữ màn hình.
+        let root = currentPath, hidden = showHidden, token = searchToken
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + (immediately ? 0 : 0.25)) { [weak self] in
+            guard token.current == gen else { return }
+            let found = RecursiveSearch.run(in: root, query: q, showHidden: hidden) { token.current != gen }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, token.current == gen, root == self.currentPath else { return }
                 self.searchResults = found
+                self.completedQuery = q
                 self.applySortAndFilter()
                 self.updateStatus()
             }
         }
-    }
-
-    private func generationSnapshot() -> Int {
-        if Thread.isMainThread { return searchGeneration }
-        return DispatchQueue.main.sync { searchGeneration }
     }
 
     private func updateLocationUI() {
@@ -740,6 +936,12 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        // Enter trong ô tìm kiếm: tìm ngay (như Windows), giữ con trỏ trong ô, không chuyển phím đi nơi khác.
+        if control === search, commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            let q = search.stringValue.trimmingCharacters(in: .whitespaces)
+            if completedQuery != q { startSearch(immediately: true) }
+            return true
+        }
         if control === address, commandSelector == #selector(NSResponder.cancelOperation(_:)) {
             address.restoreDisplay()
             view.window?.makeFirstResponder(table)
@@ -781,7 +983,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     func numberOfRows(in tableView: NSTableView) -> Int { items.count }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let id = tableColumn?.identifier.rawValue else { return nil }
+        guard let id = tableColumn?.identifier.rawValue, items.indices.contains(row) else { return nil }
         let it = items[row]
         let cell = NSTableCellView()
         let t: NSTextField
@@ -798,6 +1000,30 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
                 icon.widthAnchor.constraint(equalToConstant: 16), icon.heightAnchor.constraint(equalToConstant: 16),
             ])
             if Self.cutPaths.contains(it.path) { icon.alphaValue = 0.5 }
+        case "status":
+            t = label("")
+            if let info = cloudStatusInfo(for: it.path) {
+                let st = info.status
+                let (sym, color): (String, NSColor) = {
+                    switch st {
+                    case .onlineOnly: return ("cloud.fill", Theme.accent)
+                    case .local: return ("checkmark.circle", NSColor(srgbRed: 0.06, green: 0.49, blue: 0.06, alpha: 1))
+                    case .downloading, .uploading, .syncing: return ("arrow.triangle.2.circlepath", Theme.accent)
+                    case .error: return ("exclamationmark.circle", Theme.closeHover)
+                    }
+                }()
+                let tip = info.detail.map { L10n.t(st.l10nKey) + "\n" + $0 } ?? L10n.t(st.l10nKey)
+                let icon = NSImageView(image: Theme.symbol(sym, size: 14) ?? NSImage())
+                icon.contentTintColor = color
+                icon.toolTip = tip
+                icon.translatesAutoresizingMaskIntoConstraints = false
+                cell.addSubview(icon)
+                NSLayoutConstraint.activate([
+                    icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
+                    icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                ])
+                cell.toolTip = tip
+            }
         case "modified": t = label(Formatting.date(it.modified), color: Theme.secondaryText)
         case "type": t = label(it.typeDescription(), color: Theme.secondaryText)
         case "folder":
@@ -832,7 +1058,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     func tableViewSelectionDidChange(_ notification: Notification) { selectionChanged() }
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
-        URL(fileURLWithPath: items[row].path) as NSURL
+        items.indices.contains(row) ? URL(fileURLWithPath: items[row].path) as NSURL : nil
     }
 
     func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
@@ -895,6 +1121,7 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
                 add("newTextFile", #selector(newTextFile(_:)), to: m)
             }
             menu.addItem(.separator())
+            addCloudItems(to: menu, paths: [currentPath], add: add)
             add("openInTerminal", #selector(openInTerminal(_:)))
             add("copyAddress", #selector(copyAddress(_:)))
             add("properties", #selector(showInfo(_:)), "Option+Enter")
@@ -941,6 +1168,9 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             add("openNewTab", #selector(openInNewTab(_:)))
             add("openNewWindow", #selector(openInNewWindow(_:)))
         }
+        // Ổ đám mây (OneDrive, Google Drive, iCloud, Dropbox): nhóm lệnh như Windows / Finder.
+        menu.addItem(.separator())
+        addCloudItems(to: menu, paths: target.map(\.path), add: add)
         // Chia sẻ với ›: AirDrop, Mail, Tin nhắn… của macOS
         sub("shareWith") { m in
             let urls = target.map { URL(fileURLWithPath: $0.path) }
@@ -1185,6 +1415,147 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             let ext = (it.name as NSString).pathExtension
             let len = it.isDirectory || ext.isEmpty ? (it.name as NSString).length : (it.name as NSString).length - (ext as NSString).length - 1
             field.currentEditor()?.selectedRange = NSRange(location: 0, length: max(0, len))
+        }
+    }
+
+    // MARK: Ổ đám mây: Tải về máy, Giải phóng dung lượng, Chia sẻ, Sao chép liên kết, Xem trực tuyến
+
+    private var cloudTargets: [String] = []
+    private var cloudProvider: CloudProvider?
+
+    /// Thêm nhóm lệnh đám mây nếu mọi mục nằm cùng một ổ đám mây; thêm vạch ngăn ở cuối.
+    private func addCloudItems(to menu: NSMenu, paths: [String], add: (String, Selector?, String, NSMenu?, String?) -> NSMenuItem) {
+        guard let first = paths.first, let cloud = CloudProvider.of(first),
+              paths.allSatisfy({ CloudProvider.of($0)?.root == cloud.root }) else { return }
+        cloudTargets = paths
+        cloudProvider = cloud
+        let icon = Theme.symbol("cloud.fill", size: 14)
+        add("cloudKeep", #selector(cloudKeepOnDevice(_:)), "", nil, nil).image = icon
+        add("cloudFreeUp", #selector(cloudFreeUpSpace(_:)), "", nil, nil).image = icon
+        add("cloudShare", #selector(cloudShare(_:)), "", nil, nil).image = icon
+        if cloud.kind == .iCloud {
+            if paths.count == 1, !(DirectoryReader.item(at: first)?.isDirectory ?? true) {
+                add("cloudCopyLink", #selector(cloudCopyLink(_:)), "", nil, nil).image = icon
+            }
+        } else {
+            add("", #selector(cloudMoreInFinder(_:)), "", nil, L10n.f("cloudMoreInFinder", cloud.name)).image = icon
+        }
+        if cloud.webURL(for: first) != nil {
+            add("", #selector(cloudViewOnline(_:)), "", nil, L10n.f("cloudViewOnline", cloud.name)).image = icon
+        }
+        menu.addItem(.separator())
+    }
+
+    /// Các tệp bên trong (thư mục thì duyệt đệ quy, tối đa 20.000 tệp).
+    private static func cloudFiles(_ paths: [String]) -> [URL] {
+        let fm = FileManager.default
+        var out: [URL] = []
+        for p in paths {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: p, isDirectory: &isDir) else { continue }
+            if !isDir.boolValue { out.append(URL(fileURLWithPath: p)); continue }
+            for rel in fm.subpaths(atPath: p) ?? [] {
+                if out.count >= 20_000 { break }
+                let full = p + "/" + rel
+                var d: ObjCBool = false
+                if fm.fileExists(atPath: full, isDirectory: &d), !d.boolValue, !(rel as NSString).lastPathComponent.hasPrefix(".") {
+                    out.append(URL(fileURLWithPath: full))
+                }
+            }
+        }
+        return out
+    }
+
+    /// "Luôn giữ trên thiết bị này": tải toàn bộ về máy.
+    @objc func cloudKeepOnDevice(_ sender: Any?) {
+        let paths = cloudTargets
+        showMessage(L10n.t("cloudDownloadingStart"))
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let files = Self.cloudFiles(paths)
+            var failed = 0
+            for u in files where CloudStatus.of(u.path) == .onlineOnly {
+                do { try FileManager.default.startDownloadingUbiquitousItem(at: u) } catch { failed += 1 }
+            }
+            DispatchQueue.main.async {
+                self?.showMessage(failed == 0 ? L10n.t("cloudDownloading") : L10n.f("cloudSomeFailed", failed))
+                // Theo dõi sát (mỗi giây) để cột Trạng thái chuyển đám mây → đang tải → dấu tích ngay khi xong.
+                self?.cloudFastUntil = Date().addingTimeInterval(60)
+                self?.rescanCloudStatus()
+            }
+        }
+    }
+
+    /// "Giải phóng dung lượng": xóa bản trên máy, chỉ giữ trên đám mây (tệp đang đồng bộ thì bỏ qua).
+    @objc func cloudFreeUpSpace(_ sender: Any?) {
+        let paths = cloudTargets
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let files = Self.cloudFiles(paths)
+            var freed = 0, failed = 0
+            for u in files {
+                guard let st = CloudStatus.of(u.path), st == .local else { continue }
+                do { try FileManager.default.evictUbiquitousItem(at: u); freed += 1 } catch { failed += 1 }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if failed > 0 && freed == 0 {
+                    let a = NSAlert()
+                    a.messageText = L10n.t("cloudFreeUpFailed")
+                    a.informativeText = L10n.f("cloudFreeUpFailedInfo", self.cloudProvider?.name ?? "")
+                    a.runModal()
+                } else {
+                    self.showMessage(failed == 0 ? L10n.f("cloudFreed", freed) : L10n.f("cloudSomeFailed", failed))
+                }
+                self.refresh(nil)
+            }
+        }
+    }
+
+    @objc func cloudShare(_ sender: Any?) {
+        let urls = cloudTargets.map { URL(fileURLWithPath: $0) }
+        guard !urls.isEmpty else { return }
+        let picker = NSSharingServicePicker(items: urls)
+        picker.show(relativeTo: table.bounds, of: table, preferredEdge: .minY)
+    }
+
+    /// iCloud Drive: tạo liên kết tải xuống (FileManager.url(forPublishingUbiquitousItemAt:)) và chép vào bộ nhớ tạm.
+    @objc func cloudCopyLink(_ sender: Any?) {
+        guard let p = cloudTargets.first else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let link = try? FileManager.default.url(forPublishingUbiquitousItemAt: URL(fileURLWithPath: p), expiration: nil)
+            DispatchQueue.main.async {
+                if let link {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(link.absoluteString, forType: .string)
+                    self?.showMessage(L10n.t("cloudLinkCopied"))
+                } else {
+                    self?.showMessage(L10n.t("cloudLinkFailed"))
+                }
+            }
+        }
+    }
+
+    @objc func cloudViewOnline(_ sender: Any?) {
+        guard let p = cloudTargets.first, let u = cloudProvider?.webURL(for: p) else { return }
+        NSWorkspace.shared.open(u)
+    }
+
+    /// Sao chép liên kết, Quản lý quyền truy cập, Luôn giữ trên thiết bị (đánh dấu ghim) là lệnh riêng của ứng dụng
+    /// OneDrive / Google Drive; macOS chỉ hiện chúng trong Finder. Mở Finder và chọn sẵn mục để dùng menu đó.
+    @objc func cloudMoreInFinder(_ sender: Any?) {
+        let urls = cloudTargets.map { URL(fileURLWithPath: $0) }
+        let key = "MacMfile.skipCloudFinderHint"
+        let go = { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+        if UserDefaults.standard.bool(forKey: key) { go(); return }
+        let a = NSAlert()
+        a.messageText = L10n.f("cloudMoreInFinder", cloudProvider?.name ?? "")
+        a.informativeText = L10n.f("cloudFinderHint", cloudProvider?.name ?? "")
+        a.addButton(withTitle: L10n.t("openFinder"))
+        a.addButton(withTitle: L10n.t("cancel"))
+        a.showsSuppressionButton = true
+        a.suppressionButton?.title = L10n.t("dontAskAgain")
+        if a.runModal() == .alertFirstButtonReturn {
+            if a.suppressionButton?.state == .on { UserDefaults.standard.set(true, forKey: key) }
+            go()
         }
     }
 
@@ -1523,7 +1894,8 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     // MARK: Menu thả của thanh lệnh
 
     private func popUp(_ menu: NSMenu, from sender: Any?) {
-        guard let v = sender as? NSView else { return }
+        // Gọi từ menu "Xem thêm" (nút đã bị gom do cửa sổ hẹp): mở menu ngay dưới nút "…".
+        guard let v = (sender as? NSView) ?? commandButtons.first(where: { $0.1 == "seeMore" })?.0 else { return }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: v.bounds.height + 4), in: v)
     }
 
@@ -1602,12 +1974,24 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
             it.target = self
             m.addItem(it)
         }
+        // Các nút thanh lệnh đang bị gom vì cửa sổ hẹp (như Windows 11).
+        let hidden = commandBar?.hiddenButtons ?? []
+        for b in hidden {
+            let it = NSMenuItem(title: b.title, action: b.action, keyEquivalent: "")
+            it.target = self
+            it.image = b.image
+            m.addItem(it)
+        }
+        if !hidden.isEmpty { m.addItem(.separator()) }
         add(L10n.t("pinQuick") + "\tCmd+Shift+P", #selector(pinSelected(_:)))
         add(L10n.t("selectAll") + "\tCmd+A", #selector(selectAllItems(_:)))
         add(L10n.t("copyPath") + "\tCmd+Shift+C", #selector(copyPath(_:)))
         add(L10n.t("properties") + "\tOption+Enter", #selector(showInfo(_:)))
         m.addItem(.separator())
         add(L10n.t("language"), #selector(toggleLanguage(_:)))
+        let opt = NSMenuItem(title: L10n.t("optionsMenu") + "\tCmd+,", action: #selector(AppDelegate.showOptions(_:)), keyEquivalent: "")
+        opt.target = NSApp.delegate
+        m.addItem(opt)
         popUp(m, from: sender)
     }
 
@@ -1625,5 +2009,23 @@ final class BrowserViewController: NSViewController, NSTableViewDataSource, NSTa
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { selectedItems.count }
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
         URL(fileURLWithPath: selectedItems[index].path) as NSURL
+    }
+}
+
+/// Số thứ tự lượt tìm kiếm, khóa bằng NSLock nên luồng nền đọc được mà không phải chờ luồng chính.
+final class SearchToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    var current: Int {
+        lock.lock(); defer { lock.unlock() }
+        return value
+    }
+
+    @discardableResult
+    func next() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        value += 1
+        return value
     }
 }

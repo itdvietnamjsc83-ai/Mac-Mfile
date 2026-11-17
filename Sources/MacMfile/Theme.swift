@@ -1,4 +1,6 @@
 import AppKit
+import QuickLookThumbnailing
+import MfileCore
 import UniformTypeIdentifiers
 
 /// Màu, phông, kích thước đo theo Windows 11 File Explorer (Mục 2.3, bản mẫu đã duyệt).
@@ -41,12 +43,20 @@ enum Theme {
     static var isDark: Bool { NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }
     static func toggleAppearance() { appearance = isDark ? .light : .dark }
 
-    static let rowHeight: CGFloat = 32
+    /// Cỡ chữ hiển thị do người dùng chọn trong Tùy chọn (1 = 100%). Hàng và chữ cùng phóng theo.
+    static let textScaleKey = "MacMfile.textScale"
+    static let textScales: [Double] = [0.9, 1.0, 1.15, 1.3, 1.5]
+    static var textScale: CGFloat {
+        let v = UserDefaults.standard.double(forKey: textScaleKey)
+        return v >= 0.8 && v <= 2 ? CGFloat(v) : 1
+    }
+    static var rowHeight: CGFloat { (32 * max(1, textScale)).rounded() }
 
     /// Phông giao diện như Windows 11: Segoe UI nếu máy đã cài; nếu không thì Open Sans đóng kèm
     /// (cùng tác giả Steve Matteson, dáng chữ gần Segoe, đủ dấu tiếng Việt, giấy phép OFL); cuối cùng là phông hệ thống.
-    static func font(_ size: CGFloat = 12, weight: NSFont.Weight = .regular) -> NSFont {
+    static func font(_ size0: CGFloat = 12, weight: NSFont.Weight = .regular) -> NSFont {
         FluentIcons.register()
+        let size = (size0 * textScale * 2).rounded() / 2
         let semibold = weight != .regular
         if let f = NSFont(name: semibold ? "Segoe UI Semibold" : "Segoe UI", size: size) { return f }
         // Open Sans có chiều cao chữ thường lớn hơn Segoe; thu nhỏ 5% để cột chữ cân như bản Windows.
@@ -99,6 +109,8 @@ class FlatButton: NSButton {
     private(set) var fixedHeight: NSLayoutConstraint!
     /// Nút bật/tắt đang chọn (như nút Chi tiết/Biểu tượng lớn ở thanh trạng thái Windows).
     var isActive = false { didSet { needsDisplay = true } }
+    /// Khoảng đệm hai bên (tổng), mặc định 16 như thanh lệnh; thanh địa chỉ dùng nhỏ hơn cho xích lại.
+    var horizontalPadding: CGFloat = 16 { didSet { invalidateIntrinsicContentSize() } }
 
     convenience init(title: String, symbol: String?, target: AnyObject?, action: Selector?) {
         self.init(frame: .zero)
@@ -118,7 +130,7 @@ class FlatButton: NSButton {
 
     override var intrinsicContentSize: NSSize {
         let s = super.intrinsicContentSize
-        return NSSize(width: s.width + 16, height: 32)
+        return NSSize(width: s.width + horizontalPadding, height: 32)
     }
 
     override func updateTrackingAreas() {
@@ -162,6 +174,14 @@ func label(_ text: String, size: CGFloat = 12, color: NSColor = Theme.text) -> N
     l.textColor = color
     l.lineBreakMode = .byTruncatingTail
     l.translatesAutoresizingMaskIntoConstraints = false
+    return l
+}
+
+/// Nhãn trong các ngăn co giãn (ngăn chi tiết, trang chủ, hướng dẫn): chữ dài thì cắt bớt hoặc xuống dòng,
+/// không bao giờ đẩy ngăn hay cửa sổ giãn ra (độ ưu tiên chống co 1 < 500 của kích thước cửa sổ).
+func paneLabel(_ text: String, size: CGFloat = 12, color: NSColor = Theme.text) -> NSTextField {
+    let l = label(text, size: size, color: color)
+    l.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
     return l
 }
 
@@ -212,6 +232,10 @@ enum FluentIcons {
         "arrow.up": 0xF19B,
         "arrow.up.arrow.down": 0xF18A,
         "character.cursor.ibeam": 0xF669,
+        "arrow.triangle.2.circlepath": 0xF190,
+        "checkmark.circle": 0xF298,
+        "exclamationmark.circle": 0xF3F1,
+        "textformat.size": 0xF7E6,
         "chevron.down": 0xF2A3,
         "chevron.right": 0xF2B0,
         "cloud.fill": 0xF2E4,
@@ -325,7 +349,75 @@ enum FileIcons {
 
     /// Biểu tượng cho một đường dẫn: kiểu Windows nếu có, không thì của macOS.
     static func icon(for path: String) -> NSImage {
+        // Trang chủ và Máy Mac này không phải đường dẫn thật: dùng biểu tượng riêng như tab của Windows 11.
+        if path == SpecialLocation.home { return Theme.symbol("house", size: 16) ?? NSImage() }
+        if path == SpecialLocation.thisMac { return named("desktop_computer") ?? NSImage() }
         if let k = kind(of: path), let img = named(k) { return img }
         return NSWorkspace.shared.icon(forFile: path)
+    }
+}
+
+/// Thanh lệnh kiểu Windows 11: thiếu chỗ thì các nút cuối được gom vào nút "Xem thêm (…)" (luôn hiện);
+/// nút cố định bên phải (Chi tiết) luôn hiện. Không bao giờ đẩy cửa sổ giãn ra.
+final class CollapsingBar: ColorView {
+    /// Các mục co được, theo thứ tự trái → phải (nút và vạch ngăn).
+    var collapsible: [NSView] = []
+    var moreButton: NSView?
+    var trailingFixed: NSView?
+    var leadingInset: CGFloat = 10
+    var spacing: CGFloat = 2
+    private(set) var hiddenButtons: [FlatButton] = []
+
+    override func layout() {
+        super.layout()
+        func w(_ v: NSView) -> CGFloat { v is FlatButton ? v.intrinsicContentSize.width : max(v.intrinsicContentSize.width, 1) }
+        let fixed = leadingInset + (moreButton.map { w($0) } ?? 0) + (trailingFixed.map { w($0) + 20 } ?? 10)
+        var total = fixed + collapsible.reduce(0) { $0 + w($1) + spacing }
+        var hideFrom = collapsible.count
+        while total > bounds.width, hideFrom > 0 {
+            hideFrom -= 1
+            total -= w(collapsible[hideFrom]) + spacing
+        }
+        // Vạch ngăn đứng cuối phần còn hiện thì ẩn luôn.
+        var lastVisible = hideFrom
+        while lastVisible > 0, !(collapsible[lastVisible - 1] is FlatButton) { lastVisible -= 1 }
+        var changed = false
+        for (i, v) in collapsible.enumerated() {
+            let hide = i >= lastVisible
+            if v.isHidden != hide { v.isHidden = hide; changed = true }
+        }
+        hiddenButtons = collapsible[hideFrom...].compactMap { $0 as? FlatButton }
+        if changed { needsLayout = true }
+    }
+}
+
+
+/// Ảnh thu nhỏ như Windows (ngăn chi tiết, Biểu tượng lớn…): ảnh, video, PDF, tài liệu Office hiện nội dung thật.
+enum Thumbnails {
+    private static let cache = NSCache<NSString, NSImage>()
+
+    /// Loại tệp nên hiện ảnh thu nhỏ thay cho biểu tượng.
+    static func wants(_ path: String) -> Bool {
+        let ext = (path as NSString).pathExtension.lowercased()
+        guard !ext.isEmpty, let t = UTType(filenameExtension: ext) else { return false }
+        return t.conforms(to: .image) || t.conforms(to: .movie) || t.conforms(to: .pdf)
+            || t.conforms(to: .presentation) || t.conforms(to: .spreadsheet)
+            || ["docx", "doc", "pages", "key", "numbers", "rtf"].contains(ext)
+    }
+
+    /// Gọi `done` trên luồng chính với ảnh thu nhỏ (hoặc không gọi nếu không tạo được).
+    static func load(_ path: String, size: CGFloat, scale: CGFloat = NSScreen.main?.backingScaleFactor ?? 2, done: @escaping (NSImage) -> Void) {
+        guard wants(path) else { return }
+        let key = "\(path)@\(Int(size))" as NSString
+        if let c = cache.object(forKey: key) { done(c); return }
+        let req = QLThumbnailGenerator.Request(fileAt: URL(fileURLWithPath: path), size: CGSize(width: size, height: size),
+                                               scale: scale, representationTypes: .thumbnail)
+        QLThumbnailGenerator.shared.generateBestRepresentation(for: req) { rep, _ in
+            guard let img = rep?.nsImage else { return }
+            DispatchQueue.main.async {
+                cache.setObject(img, forKey: key)
+                done(img)
+            }
+        }
     }
 }

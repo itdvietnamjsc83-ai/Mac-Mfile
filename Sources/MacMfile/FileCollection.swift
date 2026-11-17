@@ -76,6 +76,7 @@ final class FileCellItem: NSCollectionViewItem {
     private let right1 = label("", color: Theme.secondaryText)
     private let right2 = label("", color: Theme.secondaryText)
     private var mode: ViewMode = .mediumIcons
+    private var currentPath = ""
     var dimmed = false { didSet { icon.alphaValue = dimmed ? 0.5 : 1 } }
 
     override func loadView() {
@@ -92,6 +93,14 @@ final class FileCellItem: NSCollectionViewItem {
     func configure(_ it: FileItem, mode: ViewMode) {
         self.mode = mode
         icon.image = FileIcons.icon(for: it.path)
+        // Từ Biểu tượng vừa trở lên: ảnh thu nhỏ thật (như Windows); ô được dùng lại thì bỏ kết quả cũ.
+        currentPath = it.path
+        if mode.iconSize >= 48 {
+            Thumbnails.load(it.path, size: CGFloat(mode.iconSize)) { [weak self] img in
+                guard self?.currentPath == it.path else { return }
+                self?.icon.image = img
+            }
+        }
         name.stringValue = Settings.displayName(it)
         name.toolTip = it.name
         let size = it.isDirectory ? "" : Formatting.size(it.size)
