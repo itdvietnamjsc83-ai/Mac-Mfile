@@ -44,12 +44,27 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
     private var commandButtons: [(FlatButton, String)] = []
     private weak var commandBar: CollapsingBar?
     private var messageTimer: Timer?
+    /// Tự làm mới danh sách khi thư mục đang xem thay đổi (tệp mới, đổi tên, xóa).
+    private let folderWatcher = FolderWatcher()
+    /// Trạng thái đồng bộ đã đọc của các mục đang xem (đường dẫn → trạng thái), đọc lại định kỳ ở luồng nền.
+    private var cloudInfo: [String: CloudStatus.Info] = [:]
+    private var cloudTimer: Timer?
+    private var cloudTick = 0
+    /// Sau khi bấm tải về/giải phóng: kiểm tra mỗi giây cho tới mốc này.
+    private var cloudFastUntil = Date.distantPast
+    private var cloudScanning = false
+    private let cloudQueue = DispatchQueue(label: "MacMfile.cloudStatus", qos: .utility)
 
     init(startPath: String) {
         history = NavigationHistory(start: startPath)
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        cloudTimer?.invalidate()
+        folderWatcher.stop()
+    }
 
     // MARK: Dựng giao diện
 
@@ -99,6 +114,7 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
 
         setupHelp()
         sidebar.onSelect = { [weak self] p in self?.navigate(to: p) }
+        folderWatcher.onChange = { [weak self] in self?.folderDidChange() }
         sidebar.onOpenNewWindow = { p in (NSApp.delegate as? AppDelegate)?.openWindow(at: p) }
         sidebar.onOpenNewTab = { [weak self] p in (self?.view.window?.windowController as? MainWindowController)?.addTab(path: p) }
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: L10n.didChangeNotification, object: nil)
@@ -222,6 +238,11 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
             c.isHidden = id == "folder" || id == "status"
             table.addTableColumn(c)
         }
+        // Cột giữ đúng bề rộng người dùng kéo, không chia lại cho các cột khác; tổng rộng hơn khung thì cuộn ngang
+        // (như File Explorer). Kiểu mặc định co các cột khác để vừa khung nên ở cửa sổ hẹp cột Tên không kéo rộng ra được.
+        table.columnAutoresizingStyle = .noColumnAutoresizing
+        table.autosaveName = "MacMfile.detailsColumns"
+        table.autosaveTableColumns = true
         table.rowHeight = Theme.rowHeight
         table.allowsMultipleSelection = true
         table.usesAlternatingRowBackgroundColors = false
@@ -248,6 +269,8 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
         let scroll = NSScrollView()
         scroll.documentView = table
         scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = true
+        scroll.autohidesScrollers = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
         tableScroll = scroll
 
@@ -557,6 +580,95 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
         return bar
     }
 
+    // MARK: Tự làm mới và trạng thái đồng bộ
+
+    /// Thư mục đang xem vừa thay đổi: đọc lại danh sách, giữ nguyên lựa chọn, vị trí cuộn và ô tìm kiếm.
+    private func folderDidChange() {
+        reloadListingKeepingState()
+        if cloudTimer != nil {
+            cloudFastUntil = max(cloudFastUntil, Date().addingTimeInterval(10))
+            rescanCloudStatus()
+        }
+    }
+
+    private func reloadListingKeepingState() {
+        guard !isSpecialPage, view.window != nil,
+              let fresh = try? DirectoryReader.list(currentPath, showHidden: showHidden) else { return }
+        let byPath: ([FileItem]) -> [FileItem] = { $0.sorted { $0.path < $1.path } }
+        guard byPath(fresh) != byPath(allItems) else { return }
+        let sel = Set(selectedItems.map(\.path))
+        let origin = tableScroll.contentView.bounds.origin
+        allItems = fresh
+        applySortAndFilter()
+        selectIndexes(IndexSet(items.indices.filter { sel.contains(items[$0].path) }))
+        tableScroll.contentView.scroll(to: origin)
+        tableScroll.reflectScrolledClipView(tableScroll.contentView)
+        updateStatus()
+        sidePane.update(selection: selectedItems, folder: currentPath)
+    }
+
+    /// Trạng thái của một mục: lấy bản đã đọc, chưa có thì đọc ngay.
+    private func cloudStatusInfo(for path: String) -> CloudStatus.Info? {
+        if let i = cloudInfo[path] { return i }
+        let i = CloudStatus.info(path)
+        cloudInfo[path] = i
+        return i
+    }
+
+    /// Chỉ theo dõi khi đang ở trong ổ đám mây (iCloud, OneDrive, Google Drive…).
+    private func updateCloudMonitoring() {
+        let active = !isSpecialPage && CloudStatus.isCloudPath(currentPath + "/")
+        guard active else { cloudTimer?.invalidate(); cloudTimer = nil; return }
+        guard cloudTimer == nil else { return }
+        let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.cloudTimerFired() }
+        RunLoop.main.add(t, forMode: .common)
+        cloudTimer = t
+    }
+
+    /// Mỗi giây khi có mục đang tải xuống/tải lên/chờ đồng bộ (hoặc vừa bấm lệnh đám mây); bình thường 4 giây một lần
+    /// để bắt cả thay đổi do dịch vụ đám mây hay ứng dụng khác gây ra.
+    private func cloudTimerFired() {
+        guard view.window != nil, !cloudScanning else { return }
+        cloudTick += 1
+        let fast = Date() < cloudFastUntil || cloudInfo.values.contains { $0.status.isTransient }
+        guard fast || cloudTick % 4 == 0 else { return }
+        rescanCloudStatus()
+    }
+
+    /// Đọc lại trạng thái mọi mục đang hiện ở luồng nền, chỉ vẽ lại những dòng đã đổi.
+    private func rescanCloudStatus() {
+        guard cloudTimer != nil, !cloudScanning else { return }
+        let paths = Array(items.prefix(5000).map(\.path))
+        guard !paths.isEmpty else { return }
+        cloudScanning = true
+        let folder = currentPath
+        cloudQueue.async { [weak self] in
+            var fresh: [String: CloudStatus.Info] = [:]
+            for p in paths { if let i = CloudStatus.info(p) { fresh[p] = i } }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.cloudScanning = false
+                guard folder == self.currentPath else { return }
+                self.applyCloudInfo(fresh, paths: paths)
+            }
+        }
+    }
+
+    private func applyCloudInfo(_ fresh: [String: CloudStatus.Info], paths: [String]) {
+        var changed: [String] = []
+        for p in paths where cloudInfo[p] != fresh[p] {
+            cloudInfo[p] = fresh[p]
+            changed.append(p)
+        }
+        guard !changed.isEmpty else { return }
+        // Tải xong thì kích thước, ngày sửa có thể đổi: đọc lại danh sách rồi vẽ lại các dòng đổi trạng thái.
+        reloadListingKeepingState()
+        let set = Set(changed)
+        let rows = IndexSet(items.indices.filter { set.contains(items[$0].path) })
+        guard !rows.isEmpty, viewMode == .details else { return }
+        table.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns))
+    }
+
     // MARK: Ngôn ngữ
 
     @objc private func languageChanged() {
@@ -643,6 +755,9 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
             allItems = []
             items = []
             reloadContent()
+            folderWatcher.watch(nil)
+            cloudInfo = [:]
+            updateCloudMonitoring()
             specialPage.show(currentPath)
             updateLocationUI()
             sidebar.select(path: currentPath)
@@ -660,7 +775,11 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
             allItems = []
             showMessage(error.localizedDescription)
         }
+        folderWatcher.watch(currentPath)
+        cloudInfo = [:]
+        cloudFastUntil = Date().addingTimeInterval(5)
         applySortAndFilter()
+        updateCloudMonitoring()
         if !selecting.isEmpty {
             selectIndexes(IndexSet(items.indices.filter { selecting.contains(items[$0].path) }), scroll: true)
         }
@@ -883,25 +1002,27 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
             if Self.cutPaths.contains(it.path) { icon.alphaValue = 0.5 }
         case "status":
             t = label("")
-            if let st = CloudStatus.of(it.path) {
+            if let info = cloudStatusInfo(for: it.path) {
+                let st = info.status
                 let (sym, color): (String, NSColor) = {
                     switch st {
                     case .onlineOnly: return ("cloud.fill", Theme.accent)
                     case .local: return ("checkmark.circle", NSColor(srgbRed: 0.06, green: 0.49, blue: 0.06, alpha: 1))
-                    case .syncing: return ("arrow.triangle.2.circlepath", Theme.accent)
+                    case .downloading, .uploading, .syncing: return ("arrow.triangle.2.circlepath", Theme.accent)
                     case .error: return ("exclamationmark.circle", Theme.closeHover)
                     }
                 }()
+                let tip = info.detail.map { L10n.t(st.l10nKey) + "\n" + $0 } ?? L10n.t(st.l10nKey)
                 let icon = NSImageView(image: Theme.symbol(sym, size: 14) ?? NSImage())
                 icon.contentTintColor = color
-                icon.toolTip = L10n.t(st.l10nKey)
+                icon.toolTip = tip
                 icon.translatesAutoresizingMaskIntoConstraints = false
                 cell.addSubview(icon)
                 NSLayoutConstraint.activate([
                     icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
                     icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 ])
-                cell.toolTip = L10n.t(st.l10nKey)
+                cell.toolTip = tip
             }
         case "modified": t = label(Formatting.date(it.modified), color: Theme.secondaryText)
         case "type": t = label(it.typeDescription(), color: Theme.secondaryText)
@@ -1357,7 +1478,9 @@ final class BrowserViewController: NSViewController, NSSplitViewDelegate, NSTabl
             }
             DispatchQueue.main.async {
                 self?.showMessage(failed == 0 ? L10n.t("cloudDownloading") : L10n.f("cloudSomeFailed", failed))
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self?.refresh(nil) }
+                // Theo dõi sát (mỗi giây) để cột Trạng thái chuyển đám mây → đang tải → dấu tích ngay khi xong.
+                self?.cloudFastUntil = Date().addingTimeInterval(60)
+                self?.rescanCloudStatus()
             }
         }
     }
