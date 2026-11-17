@@ -33,7 +33,7 @@ final class AboutWindowController: NSWindowController {
 
     private var version: String {
         let i = Bundle.main.infoDictionary
-        return L10n.f("versionFmt", i?["CFBundleShortVersionString"] as? String ?? "0.1.0", i?["CFBundleVersion"] as? String ?? "dev")
+        return L10n.f("versionFmt", i?["CFBundleShortVersionString"] as? String ?? "0.2.0", i?["CFBundleVersion"] as? String ?? "dev")
     }
 
     private func rebuild() {

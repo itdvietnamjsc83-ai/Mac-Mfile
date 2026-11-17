@@ -27,6 +27,40 @@ public enum FileNaming {
         return candidate
     }
 
+    // MARK: Đổi tên ngay tại chỗ (F2 / bấm chậm lần hai, như File Explorer)
+
+    /// Ký tự macOS không cho dùng trong tên tệp.
+    public static let forbiddenCharacters: Set<Character> = ["/", ":"]
+
+    public enum RenameProblem: Equatable, Sendable {
+        case invalidCharacters
+        case reserved
+        case tooLong
+    }
+
+    /// Kiểm tra tên mới (đã bỏ khoảng trắng hai đầu). Tên rỗng không phải lỗi: Windows giữ nguyên tên cũ.
+    public static func renameProblem(_ name: String) -> RenameProblem? {
+        if name.contains(where: { forbiddenCharacters.contains($0) }) { return .invalidCharacters }
+        if name == "." || name == ".." { return .reserved }
+        if name.utf8.count > 255 { return .tooLong }
+        return nil
+    }
+
+    /// Bỏ các ký tự không hợp lệ khi đang gõ; trả về chuỗi đã lọc và có bỏ ký tự nào không.
+    public static func stripForbidden(_ text: String) -> (String, Bool) {
+        let out = String(text.filter { !forbiddenCharacters.contains($0) })
+        return (out, out.count != text.count)
+    }
+
+    /// Độ dài (UTF-16, dùng cho vùng chọn) phần tên được chọn sẵn: bỏ đuôi tệp như Windows.
+    /// Thư mục, tệp không đuôi và tệp ẩn kiểu ".env" thì chọn hết.
+    public static func editableLength(_ name: String, isDirectory: Bool) -> Int {
+        let full = (name as NSString).length
+        guard !isDirectory else { return full }
+        let (base, ext) = split(name)
+        return ext.isEmpty ? full : (base as NSString).length
+    }
+
     static func split(_ name: String) -> (String, String) {
         let ext = (name as NSString).pathExtension
         if ext.isEmpty || name.hasPrefix(".") && !name.dropFirst().contains(".") { return (name, "") }

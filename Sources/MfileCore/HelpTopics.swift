@@ -111,8 +111,8 @@ public enum HelpTopics {
           "Bấm Cmd+E (như Windows+E). Đổi phím trong Cài đặt phím tắt.", "Press Cmd+E (like Windows+E). Change it in Shortcut settings.",
           kw: "cmd e win e mo nhanh"),
         t("windowsUsers", "Hướng dẫn nhanh cho người dùng Windows", "Quick guide for Windows users",
-          "Ctrl → Cmd (hoặc bật “Dùng Ctrl như Windows”), Windows+E → Cmd+E, F2 đổi tên, F5 làm mới, Alt+Enter → Option+Enter, Delete → ⌫, Shift+Delete xóa vĩnh viễn, Windows+←/→ → Cmd+←/→.",
-          "Ctrl → Cmd (or turn on “Use Ctrl like Windows”), Win+E → Cmd+E, F2 rename, F5 refresh, Alt+Enter → Option+Enter, Delete → ⌫, Shift+Delete deletes permanently, Win+←/→ → Cmd+←/→.",
+          "Ctrl → Cmd (hoặc bật “Dùng Ctrl như Windows”), Windows+E → Cmd+E, F2 (hoặc bấm chậm lần hai lên tên) đổi tên ngay tại chỗ, F5 làm mới, Alt+Enter → Option+Enter, Delete → ⌫, Shift+Delete xóa vĩnh viễn, Windows+←/→ → Cmd+←/→.",
+          "Ctrl → Cmd (or turn on “Use Ctrl like Windows”), Win+E → Cmd+E, F2 (or a slow second click on the name) renames in place, F5 refresh, Alt+Enter → Option+Enter, Delete → ⌫, Shift+Delete deletes permanently, Win+←/→ → Cmd+←/→.",
           kw: "windows nguoi dung moi ctrl"),
     ]
 

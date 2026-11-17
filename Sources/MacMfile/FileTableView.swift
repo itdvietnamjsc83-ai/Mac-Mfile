@@ -9,8 +9,35 @@ final class FileTableView: NSTableView {
     var onQuickLook: (() -> Void)?
     var onProperties: (() -> Void)?
     var onBack: (() -> Void)?
+    /// Bấm chậm lần hai lên tên mục đang chọn: đổi tên tại chỗ (đối số là số hàng).
+    var onSlowClickRename: ((Int) -> Void)?
+    let slowClick = SlowClickRenamer()
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        let row = row(at: p)
+        let onName = row >= 0 && selectedRowIndexes == IndexSet(integer: row) && isOnNameText(p, row: row)
+        slowClick.mouseDown(event, in: self, onName: onName)
+        super.mouseDown(with: event)
+        slowClick.mouseDownFinished { [weak self] in
+            guard let self, self.selectedRowIndexes == IndexSet(integer: row) else { return }
+            self.onSlowClickRename?(row)
+        }
+    }
+
+    /// Như Windows: chỉ bấm lên chữ tên mới vào sửa, bấm lên biểu tượng hay chỗ trống thì không.
+    private func isOnNameText(_ p: NSPoint, row: Int) -> Bool {
+        let col = column(at: p)
+        guard col >= 0, tableColumns[col].identifier.rawValue == "name",
+              let cell = view(atColumn: col, row: row, makeIfNecessary: false) as? NSTableCellView,
+              let tf = cell.textField else { return false }
+        let r = tf.convert(tf.bounds, to: self)
+        let w = min(r.width, tf.intrinsicContentSize.width)
+        return p.x >= r.minX - 2 && p.x <= r.minX + w + 4
+    }
 
     override func keyDown(with event: NSEvent) {
+        slowClick.cancel()
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         switch event.keyCode {
         case 36, 76: // Return, Enter: mở; Option+Enter: Thuộc tính (Alt+Enter của Windows)

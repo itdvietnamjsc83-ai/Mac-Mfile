@@ -250,6 +250,21 @@ final class FileNamingTests: XCTestCase {
         XCTAssertEqual(FileNaming.keepBothName(".env") { $0 == ".env" }, ".env (2)")
     }
 
+    func testRenameRules() {
+        XCTAssertEqual(FileNaming.editableLength("Báo cáo.docx", isDirectory: false), 7)
+        XCTAssertEqual(FileNaming.editableLength("a.tar.gz", isDirectory: false), 5)
+        XCTAssertEqual(FileNaming.editableLength("Thư mục.v2", isDirectory: true), 10)
+        XCTAssertEqual(FileNaming.editableLength(".env", isDirectory: false), 4)
+        XCTAssertEqual(FileNaming.editableLength("README", isDirectory: false), 6)
+        XCTAssertNil(FileNaming.renameProblem("Báo cáo mới.docx"))
+        XCTAssertEqual(FileNaming.renameProblem("a/b"), .invalidCharacters)
+        XCTAssertEqual(FileNaming.renameProblem("a:b"), .invalidCharacters)
+        XCTAssertEqual(FileNaming.renameProblem(".."), .reserved)
+        XCTAssertEqual(FileNaming.renameProblem(String(repeating: "ă", count: 200)), .tooLong)
+        XCTAssertEqual(FileNaming.stripForbidden("a/b:c").0, "abc")
+        XCTAssertFalse(FileNaming.stripForbidden("abc").1)
+    }
+
     func testStats() {
         var s = TransferStats(started: Date(timeIntervalSince1970: 0))
         s.totalBytes = 1000

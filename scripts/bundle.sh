@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${1:-0.1.0}"
+VERSION="${1:-0.2.0}"
 BUILD="${2:-1}"
 OUT="build"
 APP="$OUT/Mac Mfile.app"

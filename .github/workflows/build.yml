@@ -25,12 +25,12 @@ jobs:
         run: swift test
 
       - name: Đóng gói ứng dụng
-        run: scripts/bundle.sh "0.1.0" "${{ github.run_number }}"
+        run: scripts/bundle.sh "0.2.0" "${{ github.run_number }}"
 
       - name: Tải lên bản build
         uses: actions/upload-artifact@v4
         with:
-          name: MacMfile-0.1.0-build${{ github.run_number }}
+          name: MacMfile-0.2.0-build${{ github.run_number }}
           path: |
             build/MacMfile-*.pkg
             build/MacMfile-*.dmg
